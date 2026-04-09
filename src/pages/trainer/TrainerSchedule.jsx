@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useClasses } from '../../hooks/Useclasses';
+import { useClasses } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
-import { useClients } from '../../hooks/Useclients';
+import { useClients } from '../../hooks/useClients';
 import { useAttendance } from '../../hooks/useAttendance';
 import { ChevronLeft, ChevronRight, Users, Check, X } from 'lucide-react';
 import { format, addDays, startOfWeek } from 'date-fns';

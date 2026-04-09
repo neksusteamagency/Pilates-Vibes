@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { useClients } from '../../hooks/Useclients';
+import { useClients } from '../../hooks/useClients';
 import { useBookings } from '../../hooks/useBookings';
-import { useClasses } from '../../hooks/Useclasses';
+import { useClasses } from '../../hooks/useClasses';
 import { Calendar, Clock, ChevronRight, AlertTriangle, Snowflake, Star, X } from 'lucide-react';
 import { format, parseISO, isAfter, isBefore, addHours } from 'date-fns';
 import { db } from '../../firebase/config';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useClasses } from '../../hooks/Useclasses';
+import { useClasses } from '../../hooks/useClasses';
 import { ChevronLeft, ChevronRight, Check, MessageSquare } from 'lucide-react';
 import { format, addDays, startOfWeek } from 'date-fns';
 import toast from 'react-hot-toast';

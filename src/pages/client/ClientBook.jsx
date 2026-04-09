@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { useClasses } from '../../hooks/Useclasses';
+import { useClasses } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
-import { useClients } from '../../hooks/Useclients';
+import { useClients } from '../../hooks/useClients';
 import { ChevronLeft, ChevronRight, Check, MessageSquare, X } from 'lucide-react';
 import { format, addDays, startOfWeek } from 'date-fns';
 import toast from 'react-hot-toast';

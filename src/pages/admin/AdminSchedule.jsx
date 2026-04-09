@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X, Users, Clock, User, Trash2, AlertTriangle, Edit2, Check } from 'lucide-react';
 import { format, addDays, startOfWeek } from 'date-fns';
-import { useClasses, generateTimeSlots } from '../../hooks/Useclasses';
+import { useClasses, generateTimeSlots } from '../../hooks/useClasses';
 import { useClients } from '../../hooks/useClients';
 import { useBookings } from '../../hooks/useBookings';
 import { useTrainers } from '../../hooks/useTrainers';
