@@ -127,9 +127,6 @@ export default function LoginPage() {
             Create an account
           </Link>
           {' · '}
-          <Link to="/book" style={{ color: '#7C8C5E', textDecoration: 'none', fontWeight: 500 }}>
-            Book as guest
-          </Link>
         </p>
       </div>
     </div>

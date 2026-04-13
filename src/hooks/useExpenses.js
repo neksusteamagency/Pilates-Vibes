@@ -117,8 +117,9 @@ export function useExpenses() {
   // • Lump-sum entries are EXCLUDED (replaced by their allocated splits)
   function getActualExpensesForMonth(expensesList, targetMonth) {
     return expensesList.reduce((sum, exp) => {
-      if (exp.isIncome)  return sum;
-      if (exp.isLumpSum) return sum; // excluded — the allocated splits cover it
+      if (exp.isIncome)      return sum;
+      if (exp.isLumpSum)     return sum; // excluded — the allocated splits cover it
+      if (exp.isPOSPurchase) return sum; // excluded — inventory cost, recovered via POS sales revenue
 
       if (exp.isAllocated) {
         // Only count the allocated entry for this target month

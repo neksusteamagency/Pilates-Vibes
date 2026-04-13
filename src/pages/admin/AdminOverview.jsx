@@ -5,8 +5,7 @@ import { useClients } from '../../hooks/useClients';
 import { useClasses } from '../../hooks/useClasses';
 import { useAttendance } from '../../hooks/useAttendance';
 import { useBookings } from '../../hooks/useBookings';
-import { format } from 'date-fns';
-
+import { format, addDays, startOfWeek } from 'date-fns';
 // ── Helpers ──────────────────────────────────────────────────
 function fmt12(time24) {
   if (!time24) return '';
@@ -78,14 +77,20 @@ export default function AdminOverview() {
 
   // ── Derived stats ────────────────────────────────────────
   const activeMembers  = clients.filter(c => c.status === 'active' && !c.isFrozen).length;
-  const todayClasses   = classes.filter(c => c.day === todayDay);
-  const sessionsToday  = todayClasses.length;
-  const now            = new Date();
-  const currentHour    = now.getHours() + now.getMinutes() / 60;
-  const remainingToday = todayClasses.filter(c => {
-    const [h, m] = c.time.split(':').map(Number);
-    return h + m / 60 > currentHour;
-  }).length;
+const weekStart      = startOfWeek(new Date(), { weekStartsOn: 1 });
+const todayClasses   = classes.filter(c => {
+  if (c.day !== todayDay) return false;
+  const expectedDate = format(addDays(weekStart, c.day), 'yyyy-MM-dd');
+  if (c.date && c.date !== expectedDate) return false;
+  return true;
+});
+const sessionsToday  = todayClasses.length;
+const now            = new Date();
+const currentHour    = now.getHours() + now.getMinutes() / 60;
+const remainingToday = todayClasses.filter(c => {
+  const [h, m] = c.time.split(':').map(Number);
+  return h + m / 60 > currentHour;
+}).length;
 
   // ── Alerts: low sessions + low attendance classes ────────
   const lowSessionClients = clients.filter(c =>

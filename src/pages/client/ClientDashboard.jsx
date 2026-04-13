@@ -4,7 +4,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useClients } from '../../hooks/useClients';
 import { useBookings } from '../../hooks/useBookings';
 import { useClasses } from '../../hooks/useClasses';
-import { Calendar, Clock, ChevronRight, AlertTriangle, Snowflake, Star, X } from 'lucide-react';
+import { Calendar, Clock, ChevronRight, AlertTriangle, Snowflake, Star, X, Package, CheckCircle, Clock3 } from 'lucide-react';
 import { format, parseISO, isAfter, isBefore, addHours } from 'date-fns';
 import { db } from '../../firebase/config';
 import { doc, setDoc, getDoc, updateDoc, increment, serverTimestamp, collection, addDoc } from 'firebase/firestore';
@@ -35,7 +35,6 @@ function StarRatingModal({ booking, cls, clientId, onClose }) {
     if (!rating) return toast.error('Please select a rating.');
     setSaving(true);
     try {
-      // Write rating doc — anonymous (no clientId stored with trainer)
       const ratingRef = doc(db, 'ratings', `${booking.classId}_${clientId}_${booking.weekOf || booking.id}`);
       await setDoc(ratingRef, {
         classId:   booking.classId,
@@ -44,10 +43,8 @@ function StarRatingModal({ booking, cls, clientId, onClose }) {
         rating,
         weekOf:    booking.weekOf,
         createdAt: serverTimestamp(),
-        // clientId intentionally NOT stored here for anonymity
       }, { merge: true });
 
-      // Update trainer aggregate (find trainer by name)
       const { getDocs, query, where, collection: col } = await import('firebase/firestore');
       const trainersSnap = await getDocs(query(col(db, 'trainers'), where('name', '==', cls.trainer)));
       if (!trainersSnap.empty) {
@@ -68,9 +65,7 @@ function StarRatingModal({ booking, cls, clientId, onClose }) {
         });
       }
 
-      // Mark booking as rated so we don't show rating again
       await updateDoc(doc(db, 'bookings', booking.id), { rated: true });
-
       setDone(true);
     } catch (err) {
       console.error(err);
@@ -155,9 +150,7 @@ function SessionRow({ booking, cls, last, onCancel, onRate }) {
   const month = dateLabel.split(' ')[0];
   const day   = dateLabel.split(' ')[1];
 
-  // Can cancel only confirmed bookings
   const canCancel  = booking.status === 'confirmed';
-  // Can rate only attended, not yet rated
   const canRate    = booking.status === 'attended' && !booking.rated;
 
   return (
@@ -198,6 +191,28 @@ function LoadingCard() {
   );
 }
 
+// ── Payment Status Badge ───────────────────────────────────────
+function PaymentBadge({ verified }) {
+  if (verified) {
+    return (
+      <div style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'4px 12px', borderRadius:20, background:'rgba(78,106,46,0.18)', border:'1px solid rgba(200,217,176,0.5)' }}>
+        <CheckCircle size={12} color='#7BBF52'/>
+        <span style={{ fontSize:'0.68rem', fontWeight:600, color:'#C8F0A0', textTransform:'uppercase', letterSpacing:'0.08em' }}>
+          Payment Verified
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'4px 12px', borderRadius:20, background:'rgba(196,142,58,0.18)', border:'1px solid rgba(196,142,58,0.35)' }}>
+      <Clock3 size={12} color='#E8C06A'/>
+      <span style={{ fontSize:'0.68rem', fontWeight:600, color:'#E8C06A', textTransform:'uppercase', letterSpacing:'0.08em' }}>
+        Payment Pending
+      </span>
+    </div>
+  );
+}
+
 export default function ClientDashboard() {
   const { user }    = useAuth();
   const navigate    = useNavigate();
@@ -205,18 +220,17 @@ export default function ClientDashboard() {
   const { clients, loading: clientsLoading } = useClients();
   const clientDoc = clients.find(c => c.id === user?.uid);
 
-  const { bookings, loading: bookingsLoading, clientCancelBooking } = useBookings({ clientId: user?.uid });
+  const { bookings, confirmedBookings, loading: bookingsLoading, clientCancelBooking } = useBookings({ clientId: user?.uid });
   const { classes, loading: classesLoading } = useClasses();
 
-  const [cancelTarget,  setCancelTarget]  = useState(null); // booking to cancel
+  const [cancelTarget,  setCancelTarget]  = useState(null);
   const [cancelling,    setCancelling]    = useState(false);
-  const [ratingTarget,  setRatingTarget]  = useState(null); // booking to rate
+  const [ratingTarget,  setRatingTarget]  = useState(null);
 
   const loading = clientsLoading || bookingsLoading || classesLoading;
 
   const upcoming = bookings.filter(b => b.status === 'confirmed').slice(0, 3);
   const recent   = bookings.filter(b => ['attended','cancelled','no-show'].includes(b.status)).slice(0, 3);
-  // Bookings that are attended and not yet rated — prompt for rating
   const pendingRatings = bookings.filter(b => b.status === 'attended' && !b.rated).slice(0, 1);
 
   function getClass(classId) { return classes.find(c => c.id === classId); }
@@ -225,6 +239,12 @@ export default function ClientDashboard() {
   const sessionsTotal     = clientDoc?.sessionsTotal     ?? 0;
   const barPct    = sessionsTotal > 0 ? Math.round((sessionsRemaining / sessionsTotal) * 100) : 0;
   const lowSessions = sessionsRemaining <= 2 && sessionsTotal > 0;
+  const hasPackage = !!clientDoc?.pkg && sessionsTotal > 0;
+  const isPaid     = clientDoc?.paymentVerified === true;
+
+  // Count active confirmed bookings for unpaid limit display
+  const activeBookingsCount = (confirmedBookings || []).filter(b => b.status === 'confirmed').length;
+  const unpaidAtLimit = hasPackage && !isPaid && activeBookingsCount >= 1;
 
   async function handleCancel() {
     if (!cancelTarget) return;
@@ -258,8 +278,32 @@ export default function ClientDashboard() {
         <p style={{ fontSize:'0.84rem', color:'#9C8470', marginTop:4 }}>Here's your Pilates Vibes overview.</p>
       </div>
 
+      {/* No package banner */}
+      {!loading && !hasPackage && (
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'13px 18px', borderRadius:10, marginBottom:18, background:'#F5F1E0', border:'1px solid #DDD0A0', color:'#7A6020' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <Package size={16} style={{ flexShrink:0 }}/>
+            <div style={{ fontSize:'0.84rem' }}>You don't have an active package yet. Choose one to start booking sessions!</div>
+          </div>
+          <button
+            onClick={() => navigate('/client/book')}
+            style={{ padding:'7px 16px', background:'#3D2314', color:'#F5F0E8', border:'none', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.8rem', fontWeight:500, whiteSpace:'nowrap' }}
+          >
+            Choose Package
+          </button>
+        </div>
+      )}
+
+      {/* Unpaid limit warning */}
+      {!loading && unpaidAtLimit && (
+        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 16px', borderRadius:8, fontSize:'0.82rem', marginBottom:18, background:'#F5F1E0', border:'1px solid #DDD0A0', color:'#7A6020' }}>
+          <Clock3 size={15} style={{ flexShrink:0 }}/>
+          You've used your 1 pre-payment booking. The studio will unlock full access once your payment is confirmed.
+        </div>
+      )}
+
       {/* Low sessions alert */}
-      {!loading && lowSessions && (
+      {!loading && lowSessions && isPaid && (
         <div style={{ display:'flex', alignItems:'center', gap:10, padding:'11px 16px', borderRadius:8, fontSize:'0.82rem', marginBottom:18, background:'#F7EDED', border:'1px solid #DDB0B0', color:'#8C3A3A' }}>
           <AlertTriangle size={15} style={{ flexShrink:0 }}/>
           You only have <strong style={{ margin:'0 3px' }}>{sessionsRemaining} session{sessionsRemaining !== 1 ? 's' : ''}</strong> remaining. Contact the studio to renew your package.
@@ -285,10 +329,20 @@ export default function ClientDashboard() {
         {loading ? <LoadingCard /> : (
           <div style={{ background:'linear-gradient(135deg,#3D2314,#6B3D25)', borderRadius:14, padding:24, color:'#F5F0E8', position:'relative', overflow:'hidden' }}>
             <div style={{ position:'absolute', top:-30, right:-30, width:130, height:130, borderRadius:'50%', background:'rgba(245,240,232,0.07)' }}/>
+
             <div style={{ fontSize:'0.72rem', textTransform:'uppercase', letterSpacing:'0.12em', color:'#C4AE8F', marginBottom:4 }}>My Package</div>
-            <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.4rem', fontWeight:500, marginBottom:16 }}>
+
+            <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.4rem', fontWeight:500, marginBottom:10 }}>
               {clientDoc?.pkg || 'No active package'}
             </div>
+
+            {/* Payment badge — shown when client has a package */}
+            {hasPackage && (
+              <div style={{ marginBottom:14 }}>
+                <PaymentBadge verified={isPaid} />
+              </div>
+            )}
+
             {clientDoc?.isFrozen ? (
               <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:'0.84rem', color:'#A3C4F5', marginBottom:12 }}>
                 <Snowflake size={15}/> Frozen until {clientDoc.frozenUntil}
@@ -306,6 +360,14 @@ export default function ClientDashboard() {
             ) : (
               <div style={{ fontSize:'0.84rem', color:'#C4AE8F', marginBottom:12 }}>Consider recharge</div>
             )}
+
+            {/* Unpaid: show 1-session limit note */}
+            {hasPackage && !isPaid && (
+              <div style={{ fontSize:'0.74rem', color:'#E8C06A', marginBottom:6, display:'flex', alignItems:'center', gap:5 }}>
+                <Clock3 size={11}/> 1 booking allowed until payment confirmed
+              </div>
+            )}
+
             {clientDoc?.expiry && (
               <div style={{ fontSize:'0.78rem', color:'#C4AE8F' }}>Expires {clientDoc.expiry}</div>
             )}

@@ -100,7 +100,8 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
       // BUG FIX #4: Pass weekOf so saveClassAttendance can correctly match booking records.
       await onSave(cls.id, dateStr, localLogs, nonMembers, weekOf);
       toast.success('Attendance saved!');
-      onClose();
+      // Keep the modal open so the admin can continue editing statuses.
+      // Clients remain visible regardless of their status.
     } catch {
       toast.error('Failed to save attendance.');
     } finally {
@@ -142,7 +143,7 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
               style={{ width:'100%', paddingLeft:34, padding:'9px 12px 9px 34px', border:'1.5px solid #E0D5C1', borderRadius:8, background:'#F5F0E8', fontFamily:"'DM Sans',sans-serif", fontSize:'0.85rem', color:'#2A1A0E', outline:'none', boxSizing:'border-box' }} />
           </div>
 
-          <div style={{ fontSize:'0.75rem', color:'#C4AE8F', marginBottom:12 }}>Tap a row to cycle: Pending → Attended → No-show</div>
+          <div style={{ fontSize:'0.75rem', color:'#C4AE8F', marginBottom:12 }}>Tap a row to cycle status: Pending → Attended → No-show → Pending</div>
 
           {filteredClients.length === 0 && (
             <div style={{ textAlign:'center', padding:'20px 0', color:'#C4AE8F', fontSize:'0.85rem' }}>No booked clients found.</div>
@@ -196,10 +197,16 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
             </div>
           </div>
 
-          <button onClick={handleSave} disabled={saving}
-            style={{ marginTop:20, width:'100%', padding:'13px', background:'#3D2314', color:'#F5F0E8', border:'none', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.92rem', fontWeight:600, opacity: saving ? 0.6 : 1 }}>
-            {saving ? 'Saving…' : 'Save Attendance'}
-          </button>
+          <div style={{ display:'flex', gap:8, marginTop:20 }}>
+            <button onClick={handleSave} disabled={saving}
+              style={{ flex:1, padding:'13px', background:'#3D2314', color:'#F5F0E8', border:'none', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.92rem', fontWeight:600, opacity: saving ? 0.6 : 1 }}>
+              {saving ? 'Saving…' : 'Save Attendance'}
+            </button>
+            <button onClick={onClose}
+              style={{ padding:'13px 18px', background:'#F5F0E8', color:'#6B5744', border:'1.5px solid #E0D5C1', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.92rem' }}>
+              Close
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -229,7 +236,12 @@ export default function AdminAttendance() {
     dateTo:   weekEndStr,
   });
 
-  const todayClasses   = classes.filter(c => c.day === todayIndex);
+const todayClasses = classes.filter(c => {
+  if (c.day !== todayIndex) return false;
+  const expectedDate = format(addDays(weekStart, c.day), 'yyyy-MM-dd');
+  if (c.date && c.date !== expectedDate) return false;
+  return true;
+});
   const totalToday     = todayClasses.reduce((s, c) => s + (c.booked || 0), 0);
   const attendedToday  = attendance.filter(a => a.date === todayStr && a.status === 'attended').length;
   const noShowToday    = attendance.filter(a => a.date === todayStr && a.status === 'no-show').length;
@@ -244,6 +256,11 @@ export default function AdminAttendance() {
   }
 
   const filteredClasses = classes.filter(c => {
+    // Only show the class instance whose date matches this week's date for that day.
+    // This prevents all 8 recurring instances from showing up at once.
+    const expectedDate = format(addDays(weekStart, c.day), 'yyyy-MM-dd');
+    if (c.date && c.date !== expectedDate) return false;
+
     const matchDay    = dayFilter === 'All' || DAYS_LABEL[c.day] === dayFilter;
     const matchSearch = c.name.toLowerCase().includes(search.toLowerCase()) || c.trainer.toLowerCase().includes(search.toLowerCase());
     return matchDay && matchSearch;
@@ -338,6 +355,9 @@ export default function AdminAttendance() {
             const noShows  = classAttendance.filter(a => a.status === 'no-show').length;
             const isSaved  = savedClasses.has(cls.id) || classAttendance.length > 0;
             const isToday  = format(date,'yyyy-MM-dd') === todayStr;
+            // Lock attendance for future classes: only open when the class time has arrived
+            const classDateTime = new Date(`${dateStr}T${cls.time}:00`);
+            const isFuture = classDateTime > new Date();
 
             return (
               <div key={cls.id}
@@ -376,14 +396,20 @@ export default function AdminAttendance() {
                     )}
                   </div>
                 </div>
-                <button onClick={() => setSelectedClass(cls)} style={{
-                  padding:'8px 14px', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif",
-                  fontSize:'0.8rem', fontWeight:500, transition:'all 0.18s',
-                  background: isSaved ? '#FAF7F2' : '#3D2314',
-                  color:      isSaved ? '#A0673A' : '#F5F0E8',
-                  border:     isSaved ? '1.5px solid #E0D5C1' : 'none',
-                }}>
-                  {isSaved ? 'Edit' : 'Log'}
+                <button
+                  onClick={() => !isFuture && setSelectedClass(cls)}
+                  disabled={isFuture}
+                  title={isFuture ? 'Attendance opens when the class starts' : ''}
+                  style={{
+                    padding:'8px 14px', borderRadius:8, fontFamily:"'DM Sans',sans-serif",
+                    fontSize:'0.8rem', fontWeight:500, transition:'all 0.18s',
+                    cursor: isFuture ? 'not-allowed' : 'pointer',
+                    background: isFuture ? '#F5F0E8' : isSaved ? '#FAF7F2' : '#3D2314',
+                    color:      isFuture ? '#C4AE8F' : isSaved ? '#A0673A' : '#F5F0E8',
+                    border:     isFuture ? '1.5px solid #E0D5C1' : isSaved ? '1.5px solid #E0D5C1' : 'none',
+                    opacity:    isFuture ? 0.7 : 1,
+                  }}>
+                  {isFuture ? '🔒' : isSaved ? 'Edit' : 'Log'}
                 </button>
               </div>
             );

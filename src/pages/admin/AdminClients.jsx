@@ -15,7 +15,6 @@ const PACKAGES = [
   { label: '8-Session Pack — $95',     name: '8-Session Pack',    sessionsTotal: 8,    price: 95  },
   { label: '12-Session Pack — $130',   name: '12-Session Pack',   sessionsTotal: 12,   price: 130 },
   { label: 'Monthly Unlimited — $160', name: 'Monthly Unlimited', sessionsTotal: null, price: 160 },
-  { label: 'Custom…',                  name: '__custom__',        sessionsTotal: null, price: 0   },
 ];
 
 const STATUS_FILTERS = ['All', 'Active', 'Low Sessions', 'Expiring Soon', 'Frozen', 'Unpaid'];
@@ -61,13 +60,16 @@ function ConfirmDialog({ title, message, confirmLabel = 'Confirm', danger = fals
 
 // ── New Client Modal ──────────────────────────────────────────
 function NewClientModal({ onClose, addClient }) {
-  const [form, setForm]     = useState({ name:'', phone:'', email:'', dob:'', pkg: PACKAGES[0].label, method:'Cash', notes:'' });
-  const [custom, setCustom] = useState({ name:'', sessions:'', price:'' });
+  const [form, setForm]     = useState({ name:'', phone:'', email:'', dob:'2000-01-01', pkg: PACKAGES[0].label, method:'Cash', notes:'' });
+  const [discount, setDiscount] = useState(0);
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const isNoPkg   = form.pkg === 'No Package';
-  const isCustom  = form.pkg === 'Custom…';
+  const isNoPkg = form.pkg === 'No Package';
+
+  const selectedPkgObj = PACKAGES.find(p => p.label === form.pkg);
+  const basePrice = selectedPkgObj?.price || 0;
+  const discountedPrice = basePrice * (1 - Math.min(Math.max(discount, 0), 100) / 100);
 
   async function handleCreate() {
     if (!form.name.trim())  return toast.error('Name is required.');
@@ -77,14 +79,10 @@ function NewClientModal({ onClose, addClient }) {
     let pkgName, sessionsTotal;
     if (isNoPkg) {
       pkgName = ''; sessionsTotal = 0;
-    } else if (isCustom) {
-      if (!custom.name.trim()) return toast.error('Custom package name is required.');
-      pkgName      = custom.name.trim();
-      sessionsTotal = custom.sessions === '' ? null : parseInt(custom.sessions, 10);
     } else {
-      const selectedPkg = PACKAGES.find(p => p.label === form.pkg) || PACKAGES[1];
-      pkgName      = selectedPkg.name;
-      sessionsTotal = selectedPkg.sessionsTotal;
+      const pkg  = PACKAGES.find(p => p.label === form.pkg) || PACKAGES[1];
+      pkgName      = pkg.name;
+      sessionsTotal = pkg.sessionsTotal;
     }
 
     const purchaseDate = isNoPkg ? null : new Date().toISOString().split('T')[0];
@@ -103,6 +101,8 @@ function NewClientModal({ onClose, addClient }) {
         purchaseDate, expiry,
         paymentMethod: isNoPkg ? null : form.method,
         paymentVerified: isNoPkg ? true : (form.method === 'Cash' || form.method === 'Whish' ? false : true),
+        discount: isNoPkg ? 0 : Math.min(Math.max(discount, 0), 100),
+        paidAmount: isNoPkg ? 0 : discountedPrice,
         status: 'active', isFrozen: false, frozenUntil: null, freezeStartDate: null,
         notes: form.notes.trim(), history: [],
       });
@@ -120,7 +120,7 @@ function NewClientModal({ onClose, addClient }) {
           <Field label="Full Name" span={2}><input style={inp} placeholder="e.g. Lara Nassar" value={form.name} onChange={e => set('name', e.target.value)} /></Field>
           <Field label="Phone (WhatsApp)"><input style={inp} placeholder="+961 70 000 000" value={form.phone} onChange={e => set('phone', e.target.value)} /></Field>
           <Field label="Date of Birth">
-            <input style={inp} type="date" min="1980-01-01" max="2020-12-31" value={form.dob} onChange={e => set('dob', e.target.value)} />
+            <input style={inp} type="date" min="1960-01-01" max="2026-12-31" value={form.dob} onChange={e => set('dob', e.target.value)} />
           </Field>
           <Field label="Email" span={2}><input style={inp} type="email" placeholder="optional" value={form.email} onChange={e => set('email', e.target.value)} /></Field>
           <Field label="Package" span={2}>
@@ -129,19 +129,18 @@ function NewClientModal({ onClose, addClient }) {
             </select>
           </Field>
 
-          {/* Custom package fields */}
-          {isCustom && (
-            <>
-              <Field label="Package Name" span={2}>
-                <input style={inp} placeholder="e.g. 6-Session Pack" value={custom.name} onChange={e => setCustom(p => ({ ...p, name: e.target.value }))} />
-              </Field>
-              <Field label="Number of Sessions">
-                <input style={inp} type="number" min="1" placeholder="e.g. 6 (leave blank for unlimited)" value={custom.sessions} onChange={e => setCustom(p => ({ ...p, sessions: e.target.value }))} />
-              </Field>
-              <Field label="Price ($)">
-                <input style={inp} type="number" min="0" placeholder="e.g. 75" value={custom.price} onChange={e => setCustom(p => ({ ...p, price: e.target.value }))} />
-              </Field>
-            </>
+          {/* Discount field — shown when a real package is selected */}
+          {!isNoPkg && (
+            <Field label="Discount (%)" span={2}>
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <input style={{ ...inp, flex:1 }} type="text" inputMode="numeric" placeholder="0" value={discount === 0 ? '' : discount} onChange={e => { const v = e.target.value; if (v === '' || /^\d{1,3}$/.test(v)) setDiscount(v === '' ? 0 : Math.min(Number(v), 100)); }} />
+                {discount > 0 && basePrice > 0 && (
+                  <span style={{ fontSize:'0.82rem', color:'#4E6A2E', whiteSpace:'nowrap', fontWeight:500 }}>
+                    ${discountedPrice.toFixed(2)} <span style={{ color:'#9C8470', fontWeight:400 }}>(was ${basePrice})</span>
+                  </span>
+                )}
+              </div>
+            </Field>
           )}
 
           {/* Payment method — hide when no package */}
@@ -186,13 +185,12 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
   const [freezeEnd,    setFreezeEnd]    = useState('');
   const [renewPkg,     setRenewPkg]     = useState(PACKAGES[1].label); // default: first Session
   const [renewMethod,  setRenewMethod]  = useState('Cash');
-  const [renewCustom,  setRenewCustom]  = useState({ name:'', sessions:'', price:'' });
   const [saving,       setSaving]       = useState(false);
   const [history,      setHistory]      = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [showPaidConfirm, setShowPaidConfirm] = useState(false);
 
-  const isRenewCustom = renewPkg === 'Custom…';
+  const isRenewCustom = false; // custom packages removed
 
   // Edit fields
   const [editMode,     setEditMode]     = useState(false);
@@ -250,16 +248,9 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
   }
 
   async function handleRenew() {
-    let pkgName, sessionsTotal;
-    if (isRenewCustom) {
-      if (!renewCustom.name.trim()) return toast.error('Custom package name is required.');
-      pkgName      = renewCustom.name.trim();
-      sessionsTotal = renewCustom.sessions === '' ? null : parseInt(renewCustom.sessions, 10);
-    } else {
-      const selectedPkg = PACKAGES.find(p => p.label === renewPkg) || PACKAGES[1];
-      pkgName      = selectedPkg.name;
-      sessionsTotal = selectedPkg.sessionsTotal;
-    }
+    const selectedPkg = PACKAGES.find(p => p.label === renewPkg) || PACKAGES[1];
+    const pkgName      = selectedPkg.name;
+    const sessionsTotal = selectedPkg.sessionsTotal;
     const purchaseDate = new Date().toISOString().split('T')[0];
     const expiry       = calcExpiry(purchaseDate, pkgName);
     setSaving(true);
@@ -277,15 +268,17 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
     try {
       await verifyPayment(client.id);
 
-      // Look up the package price from the PACKAGES list
+      // Use the stored paidAmount (already discount-adjusted), fallback to package list price
       const pkg    = PACKAGES.find(p => p.name === client.pkg);
-      const amount = pkg?.price || 0;
+      const amount = client.paidAmount != null ? client.paidAmount : (pkg?.price || 0);
 
       // Write income entry — negative amount matches AdminFinance convention
       if (amount > 0) {
         await addExpense({
           category:    'Income',
-          description: `${client.name} — ${client.pkg}`,
+          description: client.discount > 0
+            ? `${client.name} — ${client.pkg} (${client.discount}% discount)`
+            : `${client.name} — ${client.pkg}`,
           amount:      -amount,
           method:      client.paymentMethod || 'Cash',
           date:        new Date().toISOString().split('T')[0],
@@ -371,7 +364,7 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
               <Field label="Phone"><input style={inp} value={editForm.phone} onChange={e => setEditForm(p=>({...p,phone:e.target.value}))}/></Field>
               <Field label="Email"><input style={inp} type="email" value={editForm.email} onChange={e => setEditForm(p=>({...p,email:e.target.value}))}/></Field>
               <Field label="Date of Birth">
-                <input style={inp} type="date" min="1980-01-01" max="2020-12-31" value={editForm.dob} onChange={e => setEditForm(p=>({...p,dob:e.target.value}))}/>
+                <input style={inp} type="date" min="1960-01-01" max="2026-12-31" value={editForm.dob} onChange={e => setEditForm(p=>({...p,dob:e.target.value}))}/>
               </Field>
               <Field label="Notes"><input style={inp} value={editForm.notes} onChange={e => setEditForm(p=>({...p,notes:e.target.value}))}/></Field>
             </div>
@@ -557,15 +550,6 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
             <select style={{ ...inp, marginBottom:8 }} value={renewPkg} onChange={e => setRenewPkg(e.target.value)}>
               {PACKAGES.filter(p => p.label !== 'No Package').map(p => <option key={p.label}>{p.label}</option>)}
             </select>
-            {isRenewCustom && (
-              <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:8 }}>
-                <input style={inp} placeholder="Package name (e.g. 6-Session Pack)" value={renewCustom.name} onChange={e => setRenewCustom(p=>({...p,name:e.target.value}))}/>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <input style={inp} type="number" min="1" placeholder="Sessions (blank = unlimited)" value={renewCustom.sessions} onChange={e => setRenewCustom(p=>({...p,sessions:e.target.value}))}/>
-                  <input style={inp} type="number" min="0" placeholder="Price ($)" value={renewCustom.price} onChange={e => setRenewCustom(p=>({...p,price:e.target.value}))}/>
-                </div>
-              </div>
-            )}
             <div style={{ display:'flex', gap:8, marginBottom:8 }}>
               {['Cash','Whish'].map(m => (
                 <button key={m} onClick={() => setRenewMethod(m)} style={{ flex:1, padding:'9px', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.82rem', fontWeight:500, background: renewMethod===m ? '#3D2314':'#F5F0E8', color: renewMethod===m ? '#F5F0E8':'#6B5744', border:`1.5px solid ${renewMethod===m ? '#3D2314':'#E0D5C1'}` }}>

@@ -133,7 +133,7 @@ function LogExpenseModal({ onClose, addExpense, products, addProduct, restockPro
     category:'Rent', description:'', amount:'', method:'Cash', date:'',
     isAdvance:false, advanceMonths:1,
     selectedProduct:'', quantity:'', unitCost:'', sellingPrice:'', lowStock:'5',
-    productName:'', productEmoji:'📦', productCategory:'Drinks',
+productName:'', productEmoji:'📦', productCategory:'Drinks', emojiOpen:false,
   });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -235,7 +235,38 @@ function LogExpenseModal({ onClose, addExpense, products, addProduct, restockPro
                 <>
                   <div style={{ display:'grid', gridTemplateColumns:'1fr 60px', gap:12 }}>
                     <Field label="New Product Name"><input style={inp} placeholder="e.g. Still Water" value={form.productName} onChange={e => set('productName', e.target.value)} /></Field>
-                    <Field label="Emoji"><input style={inp} placeholder="💧" value={form.productEmoji} onChange={e => set('productEmoji', e.target.value)} /></Field>
+<Field label="Emoji">
+  <div style={{ position:'relative' }}>
+    <button type="button" onClick={() => set('emojiOpen', !form.emojiOpen)}
+      style={{ ...inp, display:'flex', alignItems:'center', gap:8, cursor:'pointer', textAlign:'left', background:'#F5F0E8' }}>
+      <span style={{ fontSize:'1.2rem' }}>{form.productEmoji}</span>
+      <span style={{ marginLeft:'auto', color:'#9C8470' }}>{form.emojiOpen ? '▲' : '▼'}</span>
+    </button>
+    {form.emojiOpen && (
+      <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, right:0, zIndex:200, background:'#FAF7F2', border:'1.5px solid #E0D5C1', borderRadius:10, padding:12, boxShadow:'0 8px 24px rgba(61,35,20,0.14)', maxHeight:260, overflowY:'auto' }}>
+        {[
+          { group:'Drinks',    emojis:['💧','🧃','☕','🍵'] },
+          { group:'Snacks',    emojis:['🍫','🍬','🍪','🧁'] },
+          { group:'Socks',     emojis:['🧦','🩴','👟'] },
+          { group:'Apparel',   emojis:['👗','👙','🎀','👒'] },
+          { group:'Other',     emojis:['📦','🎁','💊','🌿'] },
+        ].map(({ group, emojis }) => (
+          <div key={group} style={{ marginBottom:10 }}>
+            <div style={{ fontSize:'0.65rem', textTransform:'uppercase', letterSpacing:'0.08em', color:'#9C8470', marginBottom:5 }}>{group}</div>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
+              {emojis.map(e => (
+                <button key={e} type="button" onClick={() => { set('productEmoji', e); set('emojiOpen', false); }}
+                  style={{ width:34, height:34, borderRadius:7, border: form.productEmoji===e ? '2px solid #3D2314' : '1.5px solid #E0D5C1', background: form.productEmoji===e ? '#E8DFCF' : '#FAF7F2', cursor:'pointer', fontSize:'1.1rem', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  {e}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    )}
+  </div>
+</Field>
                   </div>
                   <Field label="Product Category">
                     <select style={inp} value={form.productCategory} onChange={e => set('productCategory', e.target.value)}>
@@ -382,7 +413,7 @@ export default function AdminFinance() {
               { label:'Service Income',   value:`$${totalIncome.toLocaleString()}`,      sub: format(new Date(),'MMMM yyyy'),    icon:TrendingUp,  color:'#7C8C5E', bg:'#EEF3E6' },
               { label:'POS Income',       value:`$${posIncomeValue.toLocaleString()}`,   sub:'Retail sales this month',          icon:ShoppingBag, color:'#A0673A', bg:'#F5F1E0' },
               { label:'Monthly Expenses', value:`$${monthlyExpenses.toLocaleString()}`,  sub:'Cash paid out this month',         icon:TrendingDown,color:'#8C3A3A', bg:'#F7EDED' },
-              { label:'Actual Expenses',  value:`$${actualExpenses.toLocaleString()}`,   sub:'Accrual — fair monthly cost',      icon:DollarSign,  color:'#3D2314', bg:'#F0EAE3' },
+              { label:'Actual Expenses',  value:`$${actualExpenses.toLocaleString()}`,   sub:'Operational costs only — excl. inventory & advances', icon:DollarSign,  color:'#3D2314', bg:'#F0EAE3' },
               { label:'Profit',           value:`$${profit.toLocaleString()}`,           sub:'Based on actual expenses',         icon:TrendingUp,  color: profit>=0?'#4E6A2E':'#8C3A3A', bg: profit>=0?'#EEF3E6':'#F7EDED' },
             ].map(k => (
               <div key={k.label} style={{ background:'#FAF7F2', borderRadius:14, padding:20, border:'1px solid #E0D5C1', boxShadow:'0 2px 16px rgba(61,35,20,0.10)' }}>
@@ -483,7 +514,7 @@ export default function AdminFinance() {
             </Card>
             <Card title="Actual Expenses (Accrual)">
               <div style={{ padding:'20px', textAlign:'center' }}>
-                <div style={{ fontSize:'0.78rem', color:'#9C8470', marginBottom:8 }}>Fair monthly cost — used for profit & trend</div>
+                <div style={{ fontSize:'0.78rem', color:'#9C8470', marginBottom:8 }}>Operational costs only — excludes inventory & advance payments</div>
                 <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'2.5rem', fontWeight:500, color:'#3D2314' }}>${actualExpenses.toLocaleString()}</div>
               </div>
             </Card>

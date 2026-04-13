@@ -8,8 +8,6 @@ import AppLayout from './components/layout/AppLayout';
 import LoginPage from './pages/auth/LoginPage';
 import RegisterPage from './pages/auth/RegisterPage';
 
-// Guest
-import GuestBookingPage from './pages/guest/GuestBookingPage';
 
 // Admin pages
 import AdminOverview    from './pages/admin/AdminOverview';
@@ -51,7 +49,6 @@ export default function App() {
       {/* Public */}
       <Route path="/login"    element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/book"     element={<GuestBookingPage />} />
 
       {/* Admin */}
       <Route path="/admin" element={

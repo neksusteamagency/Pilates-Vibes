@@ -4,34 +4,55 @@ import { useAuth } from '../../hooks/useAuth';
 import { useClasses } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
 import { useClients } from '../../hooks/useClients';
-import { ChevronLeft, ChevronRight, Check, MessageSquare, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Check, MessageSquare, X, Package } from 'lucide-react';
 import { format, addDays, startOfWeek } from 'date-fns';
 import toast from 'react-hot-toast';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '../../firebase/config';
 
 const DAYS = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const STEPS = ['Choose Class', 'Confirm', 'Done'];
+
+// ── Package options ─────────────────────────────────────────────────────────
+// Prices & names must match the admin PACKAGES list (AdminClients.jsx).
+// 'First Session — $10' is admin-only and intentionally excluded here.
+export const PACKAGES = [
+  { id: 'single',    name: 'Single Session',    sessions: 1,    price: 15  },
+  { id: 'four',      name: '4-Session Pack',    sessions: 4,    price: 55  },
+  { id: 'eight',     name: '8-Session Pack',    sessions: 8,    price: 95  },
+  { id: 'twelve',    name: '12-Session Pack',   sessions: 12,   price: 130 },
+  { id: 'unlimited', name: 'Monthly Unlimited', sessions: null, price: 160 },
+];
 
 function getWeekOf(weekStart) {
   return format(weekStart, 'yyyy-MM-dd');
 }
 
 // ── Package validation ──────────────────────────────────────────────────────
-function getPackageBlockReason(clientDoc) {
+function getPackageBlockReason(clientDoc, confirmedBookings) {
   if (!clientDoc) return 'Client profile not found. Please contact the studio.';
 
   const today = new Date().toISOString().split('T')[0];
 
+  // No package chosen yet
   if (!clientDoc.pkg || clientDoc.sessionsTotal === 0)
-    return "You don't have an active package. Please contact the studio to get started.";
+    return 'NO_PACKAGE';
 
   if (clientDoc.expiry && clientDoc.expiry < today)
-    return 'Your package has expired. Please renew to book sessions.';
+    return 'Your package has expired. Please contact the studio to renew.';
 
   if (clientDoc.isFrozen)
     return 'Your package is currently frozen. Please contact the studio to unfreeze it.';
 
   if ((clientDoc.sessionsRemaining ?? 0) <= 0)
-    return 'You have no sessions remaining. Please renew your package.';
+    return 'You have no sessions remaining. Please contact the studio to renew your package.';
+
+  // Payment gate: unpaid clients can only have 1 confirmed booking total
+  if (!clientDoc.paymentVerified) {
+    const activeBookings = (confirmedBookings || []).filter(b => b.status === 'confirmed');
+    if (activeBookings.length >= 1)
+      return 'UNPAID_LIMIT';
+  }
 
   return null;
 }
@@ -64,7 +85,6 @@ function BlockedModal({ message, onClose }) {
           position: 'relative',
         }}
       >
-        {/* Close button */}
         <button
           onClick={onClose}
           style={{
@@ -77,11 +97,7 @@ function BlockedModal({ message, onClose }) {
         >
           <X size={18} />
         </button>
-
-        {/* Icon */}
         <div style={{ fontSize: '2.4rem', marginBottom: 12 }}>🚫</div>
-
-        {/* Title */}
         <div style={{
           fontFamily: "'Cormorant Garant', serif",
           fontSize: '1.3rem', fontWeight: 600,
@@ -89,16 +105,12 @@ function BlockedModal({ message, onClose }) {
         }}>
           Booking Unavailable
         </div>
-
-        {/* Message */}
         <div style={{
           fontSize: '0.88rem', color: '#6B5744',
           lineHeight: 1.6, marginBottom: 24,
         }}>
           {message}
         </div>
-
-        {/* CTA */}
         <button
           onClick={onClose}
           style={{
@@ -117,21 +129,261 @@ function BlockedModal({ message, onClose }) {
   );
 }
 
+// ── Package Picker Modal ────────────────────────────────────────────────────
+function PackagePickerModal({ clientId, onClose, onSelected }) {
+  const [chosen,   setChosen]   = useState(null);
+  const [saving,   setSaving]   = useState(false);
+
+  async function confirmPackage() {
+    if (!chosen) return;
+    setSaving(true);
+    try {
+      const pkg = PACKAGES.find(p => p.id === chosen);
+      const sessionsTotal     = pkg.sessions; // null = unlimited
+      const sessionsRemaining = pkg.sessions; // null = unlimited
+      await updateDoc(doc(db, 'clients', clientId), {
+        pkg:               pkg.name,
+        sessionsTotal,
+        sessionsRemaining,
+        sessionsUsed:      0,
+        cancelledSessions: 0,
+        purchaseDate:      new Date().toISOString().split('T')[0],
+        paymentVerified:   false,
+        paidAmount:        pkg.price,
+        discount:          0,
+        status:            'active',
+        updatedAt:         serverTimestamp(),
+      });
+      toast.success(`Package "${pkg.name}" selected! The studio will confirm your payment.`);
+      onSelected();
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to select package. Please try again.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1000,
+        background: 'rgba(61,35,20,0.4)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        padding: 24,
+        backdropFilter: 'blur(2px)',
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#FAF7F2',
+          borderRadius: 18,
+          border: '1.5px solid #E0D5C1',
+          boxShadow: '0 8px 40px rgba(61,35,20,0.20)',
+          padding: '28px 24px',
+          maxWidth: 400,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        <button
+          onClick={onClose}
+          style={{ position:'absolute', top:14, right:14, background:'transparent', border:'none', cursor:'pointer', color:'#9C8470' }}
+        >
+          <X size={18}/>
+        </button>
+
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+          <Package size={20} color='#A0673A'/>
+          <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.4rem', fontWeight:600, color:'#3D2314' }}>
+            Choose Your Package
+          </div>
+        </div>
+        <p style={{ fontSize:'0.82rem', color:'#9C8470', marginBottom:20 }}>
+          You can book 1 session right away. Full access unlocks once the studio confirms your payment.
+        </p>
+
+        <div style={{ display:'flex', flexDirection:'column', gap:10, marginBottom:20 }}>
+          {PACKAGES.map(pkg => {
+            const isChosen = chosen === pkg.id;
+            return (
+              <div
+                key={pkg.id}
+                onClick={() => setChosen(pkg.id)}
+                style={{
+                  display:'flex', alignItems:'center', justifyContent:'space-between',
+                  padding:'13px 16px',
+                  borderRadius: 10,
+                  border: `1.5px solid ${isChosen ? '#3D2314' : '#E0D5C1'}`,
+                  background: isChosen ? '#F5EDE8' : '#FFFFFF',
+                  cursor: 'pointer',
+                  transition: 'all 0.18s',
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight:600, fontSize:'0.92rem', color:'#2A1A0E' }}>{pkg.name}</div>
+                  <div style={{ fontSize:'0.76rem', color:'#9C8470', marginTop:2 }}>
+                    {pkg.sessions !== null ? `${pkg.sessions} session${pkg.sessions > 1 ? 's' : ''}` : 'Unlimited sessions'}
+                  </div>
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                  <span style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.1rem', fontWeight:600, color:'#A0673A' }}>${pkg.price}</span>
+                  <div style={{
+                    width:18, height:18, borderRadius:'50%',
+                    border: `2px solid ${isChosen ? '#3D2314' : '#C4AE8F'}`,
+                    background: isChosen ? '#3D2314' : 'transparent',
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    flexShrink: 0,
+                  }}>
+                    {isChosen && <Check size={10} color='#F5F0E8'/>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <button
+          onClick={confirmPackage}
+          disabled={!chosen || saving}
+          style={{
+            width:'100%', padding:'13px',
+            background: chosen ? '#3D2314' : '#C4AE8F',
+            border:'none', borderRadius:9,
+            color:'#F5F0E8', cursor: chosen ? 'pointer' : 'not-allowed',
+            fontFamily:"'DM Sans',sans-serif", fontSize:'0.92rem', fontWeight:500,
+            opacity: saving ? 0.7 : 1,
+          }}
+        >
+          {saving ? 'Saving…' : 'Confirm Package'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Schedule Grid ───────────────────────────────────────────────────────────
+function ScheduleGrid({ weekClasses, weekStart, weekDates, alreadyBooked, onPickClass }) {
+  // Collect unique sorted time slots
+  const timeSlots = [...new Set(weekClasses.map(c => c.time))].sort();
+
+  if (!timeSlots.length) {
+    return (
+      <p style={{ color:'#9C8470', fontSize:'0.84rem', padding:'24px 0', textAlign:'center' }}>
+        No classes scheduled this week.
+      </p>
+    );
+  }
+
+  return (
+    <div style={{ overflowX:'auto' }}>
+      <table style={{ width:'100%', borderCollapse:'separate', borderSpacing:0, minWidth:560 }}>
+        <thead>
+          <tr>
+            {/* Time column header */}
+            <th style={{ width:60, padding:'6px 8px', textAlign:'left', fontSize:'0.66rem', textTransform:'uppercase', letterSpacing:'0.09em', color:'#9C8470', fontWeight:500, borderBottom:'1.5px solid #E0D5C1' }}>
+              Time
+            </th>
+            {DAYS.map((day, di) => {
+              const date = addDays(weekStart, di);
+              const isToday = format(date,'yyyy-MM-dd') === format(new Date(),'yyyy-MM-dd');
+              return (
+                <th key={di} style={{
+                  padding:'6px 4px', textAlign:'center', fontSize:'0.68rem',
+                  textTransform:'uppercase', letterSpacing:'0.09em',
+                  color: isToday ? '#A0673A' : '#9C8470',
+                  fontWeight: isToday ? 700 : 500,
+                  borderBottom:'1.5px solid #E0D5C1',
+                  whiteSpace:'nowrap',
+                }}>
+                  <div>{day}</div>
+                  <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1rem', color: isToday ? '#3D2314' : '#6B5744', fontWeight: isToday ? 600 : 400 }}>
+                    {format(date,'d')}
+                  </div>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {timeSlots.map(time => (
+            <tr key={time}>
+              {/* Time label */}
+              <td style={{ padding:'8px 8px', fontSize:'0.72rem', color:'#9C8470', fontWeight:500, verticalAlign:'middle', borderBottom:'1px solid #F0EAE3', whiteSpace:'nowrap' }}>
+                {fmt12(time)}
+              </td>
+              {DAYS.map((_, di) => {
+                const cls = weekClasses.find(c => c.day === di && c.time === time);
+                if (!cls) {
+                  return <td key={di} style={{ borderBottom:'1px solid #F0EAE3', padding:'6px 4px' }}></td>;
+                }
+                const booked       = alreadyBooked(cls.id);
+                const isFull       = cls.status === 'full';
+                const waitlistFull = isFull && cls.booked >= cls.capacity + 3;
+                const disabled     = waitlistFull;
+                return (
+                  <td key={di} style={{ padding:'6px 4px', borderBottom:'1px solid #F0EAE3', verticalAlign:'middle' }}>
+                    <div
+                      onClick={() => !disabled && onPickClass(cls)}
+                      style={{
+                        borderRadius: 8,
+                        padding: '8px 10px',
+                        border: `1.5px solid ${booked ? '#A0673A' : isFull ? '#DDB89E' : '#C8D9B0'}`,
+                        background: disabled ? '#F0EAE3' : booked ? '#F5EDE8' : isFull ? '#F5EDE8' : '#EEF3E6',
+                        cursor: disabled ? 'not-allowed' : 'pointer',
+                        opacity: disabled ? 0.55 : 1,
+                        transition: 'all 0.16s',
+                        minWidth: 80,
+                      }}
+                      onMouseEnter={e => { if (!disabled) { e.currentTarget.style.transform='translateY(-1px)'; e.currentTarget.style.boxShadow='0 2px 8px rgba(61,35,20,0.12)'; }}}
+                      onMouseLeave={e => { e.currentTarget.style.transform=''; e.currentTarget.style.boxShadow=''; }}
+                    >
+                      <div style={{ fontWeight:600, fontSize:'0.78rem', color:'#3D2314', lineHeight:1.3 }}>{cls.name}</div>
+                      <div style={{ fontSize:'0.68rem', color:'#9C8470', marginTop:2 }}>{cls.trainer}</div>
+                      <div style={{ marginTop:5 }}>
+                        <span style={{
+                          fontSize:'0.62rem', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.06em',
+                          color: booked ? '#A0673A' : disabled ? '#9C8470' : isFull ? '#8C4A2A' : '#4E6A2E',
+                        }}>
+                          {booked ? '✓ Booked' : disabled ? 'Full' : isFull ? 'Waitlist' : '● Available'}
+                        </span>
+                      </div>
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function fmt12(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
 // ── Main Component ──────────────────────────────────────────────────────────
 export default function ClientBook() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
   const { classes, loading: classesLoading } = useClasses();
-  const { bookings, addClientBooking, addToWaitlist } = useBookings({ clientId: user?.uid });
+  const { bookings, confirmedBookings, addClientBooking, addToWaitlist } = useBookings({ clientId: user?.uid });
   const { clients } = useClients();
   const clientDoc = clients.find(c => c.id === user?.uid);
 
-  const [step, setStep]             = useState(1);
-  const [selected, setSelected]     = useState(null);
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [confirming, setConfirming] = useState(false);
-  const [blockedMsg, setBlockedMsg] = useState(null); // ← drives the modal
+  const [step,          setStep]          = useState(1);
+  const [selected,      setSelected]      = useState(null);
+  const [weekOffset,    setWeekOffset]    = useState(0);
+  const [confirming,    setConfirming]    = useState(false);
+  const [blockedMsg,    setBlockedMsg]    = useState(null);
+  const [showPkgPicker, setShowPkgPicker] = useState(false);
 
   const weekStart = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weekOffset * 7);
   const weekOf    = getWeekOf(weekStart);
@@ -147,13 +399,39 @@ export default function ClientBook() {
     return bookings.some(b => b.classId === classId && b.weekOf === weekOf && b.status === 'confirmed');
   }
 
+  // Check if client can change package: only allowed if no sessions remain
+  const canChangePackage = !clientDoc?.pkg ||
+    clientDoc?.sessionsTotal === 0 ||
+    (clientDoc?.sessionsRemaining ?? 0) <= 0;
+
   function pickClass(cls) {
+      const classDateTime = new Date(`${cls.date}T${cls.time}:00`);
+  if (classDateTime <= new Date()) {
+    toast.error('This class has already started or passed.');
+    return;
+  }
     if (cls.status === 'full' && cls.booked >= (cls.capacity + 3)) return;
     if (alreadyBooked(cls.id)) { toast.error('You already have this class booked.'); return; }
 
     if (cls.status !== 'full') {
-      const blockReason = getPackageBlockReason(clientDoc);
-      if (blockReason) { setBlockedMsg(blockReason); return; }
+      const blockReason = getPackageBlockReason(clientDoc, confirmedBookings);
+
+      if (blockReason === 'NO_PACKAGE') {
+        setShowPkgPicker(true);
+        return;
+      }
+
+      if (blockReason === 'UNPAID_LIMIT') {
+        setBlockedMsg(
+          'You can book 1 session before payment is confirmed. Once the studio marks you as paid, you\'ll have full access to your package.'
+        );
+        return;
+      }
+
+      if (blockReason) {
+        setBlockedMsg(blockReason);
+        return;
+      }
     }
 
     setSelected(cls);
@@ -162,11 +440,6 @@ export default function ClientBook() {
 
   async function confirm() {
     if (!user?.uid || !selected) return;
-
-    if (selected.status !== 'full') {
-      const blockReason = getPackageBlockReason(clientDoc);
-      if (blockReason) { setBlockedMsg(blockReason); return; }
-    }
 
     setConfirming(true);
     try {
@@ -197,10 +470,17 @@ export default function ClientBook() {
   const isWaitlist = selected?.status === 'full';
 
   return (
-    <div style={{ padding:'28px 32px 40px', maxWidth:720, margin:'0 auto' }}>
+    <div style={{ padding:'28px 32px 40px', maxWidth:760, margin:'0 auto' }}>
 
-      {/* ── Blocked Modal ── */}
+      {/* Modals */}
       <BlockedModal message={blockedMsg} onClose={() => setBlockedMsg(null)} />
+      {showPkgPicker && (
+        <PackagePickerModal
+          clientId={user?.uid}
+          onClose={() => setShowPkgPicker(false)}
+          onSelected={() => { setShowPkgPicker(false); }}
+        />
+      )}
 
       {/* Step indicator */}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'center', marginBottom:28 }}>
@@ -224,10 +504,45 @@ export default function ClientBook() {
         ))}
       </div>
 
-      {/* ── STEP 1: Choose ── */}
+      {/* ── STEP 1: Schedule ── */}
       {step === 1 && (
         <div style={{ background:'#FAF7F2', borderRadius:14, border:'1px solid #E0D5C1', boxShadow:'0 2px 16px rgba(61,35,20,0.10)', padding:22 }}>
-          <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.25rem', fontWeight:500, color:'#3D2314', marginBottom:16 }}>Select a Class</div>
+
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+            <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.25rem', fontWeight:500, color:'#3D2314' }}>
+              Weekly Schedule
+            </div>
+            {/* Package pill */}
+            {clientDoc?.pkg ? (
+              <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+                <span style={{ padding:'4px 12px', borderRadius:20, fontSize:'0.72rem', fontWeight:600, background:'#EEF3E6', color:'#4E6A2E', border:'1px solid #C8D9B0' }}>
+                  📦 {clientDoc.pkg}
+                </span>
+                {canChangePackage && (
+                  <button
+                    onClick={() => setShowPkgPicker(true)}
+                    style={{ fontSize:'0.72rem', color:'#A0673A', background:'none', border:'none', cursor:'pointer', textDecoration:'underline', fontFamily:"'DM Sans',sans-serif" }}
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowPkgPicker(true)}
+                style={{ display:'flex', alignItems:'center', gap:6, padding:'6px 14px', borderRadius:20, background:'#3D2314', color:'#F5F0E8', border:'none', cursor:'pointer', fontSize:'0.78rem', fontWeight:500, fontFamily:"'DM Sans',sans-serif" }}
+              >
+                <Package size={13}/> Choose Package
+              </button>
+            )}
+          </div>
+
+          {/* Unpaid notice */}
+          {clientDoc?.pkg && !clientDoc?.paymentVerified && (
+            <div style={{ background:'#F5F1E0', border:'1px solid #DDD0A0', borderRadius:8, padding:'9px 14px', fontSize:'0.8rem', color:'#7A6020', marginBottom:14, display:'flex', alignItems:'center', gap:8 }}>
+              ⏳ <span>Payment pending confirmation by studio — you can book <strong>1 session</strong> in the meantime.</span>
+            </div>
+          )}
 
           {/* Week nav */}
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
@@ -241,47 +556,13 @@ export default function ClientBook() {
           {classesLoading ? (
             <p style={{ color:'#9C8470', fontSize:'0.84rem', padding:'16px 0' }}>Loading classes…</p>
           ) : (
-            DAYS.map((_, di) => {
-              const dayClasses = weekClasses.filter(c => c.day === di);
-              if (!dayClasses.length) return null;
-              const date = addDays(weekStart, di);
-              return (
-                <div key={di} style={{ marginBottom:12 }}>
-                  <div style={{ fontSize:'0.72rem', textTransform:'uppercase', letterSpacing:'0.1em', color:'#9C8470', fontWeight:500, marginBottom:6, paddingBottom:4, borderBottom:'1px solid #E0D5C1' }}>
-                    {format(date, 'EEEE, MMM d')}
-                  </div>
-                  {dayClasses.map(cls => {
-                    const booked       = alreadyBooked(cls.id);
-                    const isFull       = cls.status === 'full';
-                    const waitlistFull = isFull && cls.booked >= cls.capacity + 3;
-                    const disabled     = waitlistFull;
-                    return (
-                      <div key={cls.id} onClick={() => !disabled && pickClass(cls)} style={{
-                        borderRadius:8, padding:'12px 14px', marginBottom:6,
-                        border:`1.5px solid ${isFull ? '#DDB89E' : '#C8D9B0'}`,
-                        background: disabled ? '#F0EAE3' : isFull ? '#F5EDE8' : '#EEF3E6',
-                        cursor: disabled ? 'not-allowed' : 'pointer',
-                        opacity: disabled ? 0.6 : 1,
-                        display:'flex', alignItems:'center', justifyContent:'space-between',
-                        transition:'all 0.18s',
-                      }}
-                        onMouseEnter={e => { if (!disabled) { e.currentTarget.style.transform = 'translateY(-1px)'; e.currentTarget.style.boxShadow = '0 2px 10px rgba(61,35,20,0.10)'; }}}
-                        onMouseLeave={e => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}>
-                        <div>
-                          <div style={{ fontWeight:600, fontSize:'0.9rem', color:'#3D2314' }}>{cls.name}</div>
-                          <div style={{ fontSize:'0.76rem', color:'#9C8470', marginTop:2 }}>{cls.trainer} · {cls.time}</div>
-                        </div>
-                        <div style={{ textAlign:'right' }}>
-                          <span style={{ fontSize:'0.68rem', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.08em', color: disabled ? '#9C8470' : isFull ? '#8C4A2A' : '#4E6A2E' }}>
-                            {booked ? '✓ Booked' : disabled ? 'Waitlist Full' : isFull ? 'Join Waitlist' : '✓ Available'}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })
+            <ScheduleGrid
+              weekClasses={weekClasses}
+              weekStart={weekStart}
+              weekDates={weekDates}
+              alreadyBooked={alreadyBooked}
+              onPickClass={pickClass}
+            />
           )}
         </div>
       )}
