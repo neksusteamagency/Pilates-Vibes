@@ -15,6 +15,7 @@ const PACKAGES = [
   { label: '8-Session Pack — $95',     name: '8-Session Pack',    sessionsTotal: 8,    price: 95  },
   { label: '12-Session Pack — $130',   name: '12-Session Pack',   sessionsTotal: 12,   price: 130 },
   { label: 'Monthly Unlimited — $160', name: 'Monthly Unlimited', sessionsTotal: null, price: 160 },
+  { label: 'Custom Package',           name: 'Custom',            sessionsTotal: null, price: 0   },
 ];
 
 const STATUS_FILTERS = ['All', 'Active', 'Low Sessions', 'Expiring Soon', 'Frozen', 'Unpaid'];
@@ -63,30 +64,48 @@ function NewClientModal({ onClose, addClient }) {
   const [form, setForm]     = useState({ name:'', phone:'', email:'', dob:'2000-01-01', pkg: PACKAGES[0].label, method:'Cash', notes:'' });
   const [discount, setDiscount] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [customName,     setCustomName]     = useState('');
+  const [customSessions, setCustomSessions] = useState('');
+  const [customPrice,    setCustomPrice]    = useState('');
+  const [customExpiry,   setCustomExpiry]   = useState('');
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const isNoPkg = form.pkg === 'No Package';
+  const isNoPkg  = form.pkg === 'No Package';
+  const isCustom = form.pkg === 'Custom Package';
 
   const selectedPkgObj = PACKAGES.find(p => p.label === form.pkg);
-  const basePrice = selectedPkgObj?.price || 0;
+  const basePrice       = isCustom ? (parseFloat(customPrice) || 0) : (selectedPkgObj?.price || 0);
   const discountedPrice = basePrice * (1 - Math.min(Math.max(discount, 0), 100) / 100);
 
   async function handleCreate() {
     if (!form.name.trim())  return toast.error('Name is required.');
     if (!form.phone.trim()) return toast.error('Phone is required.');
+    if (isCustom) {
+      if (!customName.trim()) return toast.error('Custom package name is required.');
+      if (!customSessions || isNaN(Number(customSessions)) || Number(customSessions) < 1)
+        return toast.error('Enter a valid number of sessions.');
+      if (!customPrice || isNaN(parseFloat(customPrice)) || parseFloat(customPrice) < 0)
+        return toast.error('Enter a valid price.');
+      if (!customExpiry) return toast.error('Expiry date is required for custom packages.');
+    }
 
     // Resolve package
-    let pkgName, sessionsTotal;
+    let pkgName, sessionsTotal, finalExpiry;
     if (isNoPkg) {
-      pkgName = ''; sessionsTotal = 0;
+      pkgName = ''; sessionsTotal = 0; finalExpiry = null;
+    } else if (isCustom) {
+      pkgName       = customName.trim();
+      sessionsTotal = Number(customSessions);
+      finalExpiry   = customExpiry;
     } else {
       const pkg  = PACKAGES.find(p => p.label === form.pkg) || PACKAGES[1];
       pkgName      = pkg.name;
       sessionsTotal = pkg.sessionsTotal;
+      finalExpiry   = null;
     }
 
     const purchaseDate = isNoPkg ? null : new Date().toISOString().split('T')[0];
-    const expiry       = isNoPkg ? null : calcExpiry(purchaseDate, pkgName);
+    const expiry       = (isNoPkg || isCustom) ? finalExpiry : calcExpiry(purchaseDate, pkgName);
     const avatar       = form.name.trim().split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
     setSaving(true);
     try {
@@ -128,6 +147,22 @@ function NewClientModal({ onClose, addClient }) {
               {PACKAGES.map(p => <option key={p.label}>{p.label}</option>)}
             </select>
           </Field>
+
+          {/* Custom package fields */}
+          {isCustom && (<>
+            <Field label="Package Name" span={2}>
+              <input style={inp} placeholder="e.g. 6-Session Deal" value={customName} onChange={e => setCustomName(e.target.value)} />
+            </Field>
+            <Field label="Number of Sessions">
+              <input style={inp} type="text" inputMode="numeric" placeholder="e.g. 6" value={customSessions} onChange={e => { if (e.target.value === '' || /^\d+$/.test(e.target.value)) setCustomSessions(e.target.value); }} />
+            </Field>
+            <Field label="Price ($)">
+              <input style={inp} type="text" inputMode="decimal" placeholder="e.g. 75" value={customPrice} onChange={e => { if (e.target.value === '' || /^\d*\.?\d*$/.test(e.target.value)) setCustomPrice(e.target.value); }} />
+            </Field>
+            <Field label="Expiry Date" span={2}>
+              <input style={inp} type="date" value={customExpiry} onChange={e => setCustomExpiry(e.target.value)} />
+            </Field>
+          </>)}
 
           {/* Discount field — shown when a real package is selected */}
           {!isNoPkg && (
@@ -183,9 +218,14 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
   const [tab,          setTab]          = useState('profile');
   const [freezeStart,  setFreezeStart]  = useState('');
   const [freezeEnd,    setFreezeEnd]    = useState('');
-  const [renewPkg,     setRenewPkg]     = useState(PACKAGES[1].label); // default: first Session
-  const [renewMethod,  setRenewMethod]  = useState('Cash');
-  const [saving,       setSaving]       = useState(false);
+  const [renewPkg,          setRenewPkg]          = useState(PACKAGES[1].label); // default: first Session
+  const [renewMethod,       setRenewMethod]       = useState('Cash');
+  const [renewDiscount,     setRenewDiscount]     = useState(0);
+  const [renewCustomName,   setRenewCustomName]   = useState('');
+  const [renewCustomSess,   setRenewCustomSess]   = useState('');
+  const [renewCustomPrice,  setRenewCustomPrice]  = useState('');
+  const [renewCustomExpiry, setRenewCustomExpiry] = useState('');
+  const [saving,            setSaving]            = useState(false);
   const [history,      setHistory]      = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [showPaidConfirm, setShowPaidConfirm] = useState(false);
@@ -248,14 +288,26 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
   }
 
   async function handleRenew() {
-    const selectedPkg = PACKAGES.find(p => p.label === renewPkg) || PACKAGES[1];
-    const pkgName      = selectedPkg.name;
-    const sessionsTotal = selectedPkg.sessionsTotal;
-    const purchaseDate = new Date().toISOString().split('T')[0];
-    const expiry       = calcExpiry(purchaseDate, pkgName);
+    const isRenewCustom = renewPkg === 'Custom Package';
+    if (isRenewCustom) {
+      if (!renewCustomName.trim()) return toast.error('Custom package name is required.');
+      if (!renewCustomSess || isNaN(Number(renewCustomSess)) || Number(renewCustomSess) < 1)
+        return toast.error('Enter a valid number of sessions.');
+      if (!renewCustomPrice || isNaN(parseFloat(renewCustomPrice)) || parseFloat(renewCustomPrice) < 0)
+        return toast.error('Enter a valid price.');
+      if (!renewCustomExpiry) return toast.error('Expiry date is required for custom packages.');
+    }
+    const selectedPkg   = PACKAGES.find(p => p.label === renewPkg) || PACKAGES[1];
+    const pkgName       = isRenewCustom ? renewCustomName.trim() : selectedPkg.name;
+    const sessionsTotal = isRenewCustom ? Number(renewCustomSess) : selectedPkg.sessionsTotal;
+    const purchaseDate  = new Date().toISOString().split('T')[0];
+    const expiry        = isRenewCustom ? renewCustomExpiry : calcExpiry(purchaseDate, pkgName);
+    const basePrice     = isRenewCustom ? parseFloat(renewCustomPrice) : selectedPkg.price;
+    const clampedDiscount = Math.min(Math.max(renewDiscount, 0), 100);
+    const paidAmount    = basePrice * (1 - clampedDiscount / 100);
     setSaving(true);
     try {
-      await renewPackage(client.id, { name: pkgName, sessionsTotal, purchaseDate, expiry, paymentMethod: renewMethod });
+      await renewPackage(client.id, { name: pkgName, sessionsTotal, purchaseDate, expiry, paymentMethod: renewMethod, paidAmount, discount: clampedDiscount });
       toast.success('Package renewed!'); onClose();
     } catch { toast.error('Failed to renew.'); }
     finally { setSaving(false); }
@@ -550,12 +602,60 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
             <select style={{ ...inp, marginBottom:8 }} value={renewPkg} onChange={e => setRenewPkg(e.target.value)}>
               {PACKAGES.filter(p => p.label !== 'No Package').map(p => <option key={p.label}>{p.label}</option>)}
             </select>
+            {renewPkg === 'Custom Package' && (
+              <div style={{ display:'flex', flexDirection:'column', gap:8, marginBottom:8, padding:'12px 14px', background:'#F5F0E8', border:'1.5px solid #E0D5C1', borderRadius:10 }}>
+                <div style={{ fontSize:'0.72rem', color:'#9C8470', textTransform:'uppercase', letterSpacing:'0.08em', marginBottom:2 }}>Custom Package Details</div>
+                <input style={inp} placeholder="Package name (e.g. 6-Session Deal)" value={renewCustomName} onChange={e => setRenewCustomName(e.target.value)} />
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div>
+                    <label style={{ display:'block', fontSize:'0.7rem', color:'#6B5744', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>Sessions</label>
+                    <input style={inp} type="text" inputMode="numeric" placeholder="e.g. 6" value={renewCustomSess} onChange={e => { if (e.target.value === '' || /^\d+$/.test(e.target.value)) setRenewCustomSess(e.target.value); }} />
+                  </div>
+                  <div>
+                    <label style={{ display:'block', fontSize:'0.7rem', color:'#6B5744', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>Price ($)</label>
+                    <input style={inp} type="text" inputMode="decimal" placeholder="e.g. 75" value={renewCustomPrice} onChange={e => { if (e.target.value === '' || /^\d*\.?\d*$/.test(e.target.value)) setRenewCustomPrice(e.target.value); }} />
+                  </div>
+                </div>
+                <div>
+                  <label style={{ display:'block', fontSize:'0.7rem', color:'#6B5744', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:4 }}>Expiry Date</label>
+                  <input style={inp} type="date" value={renewCustomExpiry} onChange={e => setRenewCustomExpiry(e.target.value)} />
+                </div>
+              </div>
+            )}
             <div style={{ display:'flex', gap:8, marginBottom:8 }}>
               {['Cash','Whish'].map(m => (
                 <button key={m} onClick={() => setRenewMethod(m)} style={{ flex:1, padding:'9px', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.82rem', fontWeight:500, background: renewMethod===m ? '#3D2314':'#F5F0E8', color: renewMethod===m ? '#F5F0E8':'#6B5744', border:`1.5px solid ${renewMethod===m ? '#3D2314':'#E0D5C1'}` }}>
                   {m === 'Whish' ? '📱 Whish' : '💵 Cash'}
                 </button>
               ))}
+            </div>
+            {/* Discount field */}
+            <div style={{ marginBottom:8 }}>
+              <label style={{ display:'block', fontSize:'0.72rem', color:'#6B5744', textTransform:'uppercase', letterSpacing:'0.06em', marginBottom:5 }}>Discount (%)</label>
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <input
+                  style={{ ...inp, flex:1 }}
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={renewDiscount === 0 ? '' : renewDiscount}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (v === '' || /^\d{1,3}$/.test(v)) setRenewDiscount(v === '' ? 0 : Math.min(Number(v), 100));
+                  }}
+                />
+                {renewDiscount > 0 && (() => {
+                  const isRenewCustom = renewPkg === 'Custom Package';
+                  const selectedPkg = PACKAGES.find(p => p.label === renewPkg) || PACKAGES[1];
+                  const basePrice = isRenewCustom ? (parseFloat(renewCustomPrice) || 0) : selectedPkg.price;
+                  const discounted = basePrice * (1 - renewDiscount / 100);
+                  return basePrice > 0 ? (
+                    <span style={{ fontSize:'0.82rem', color:'#4E6A2E', whiteSpace:'nowrap', fontWeight:500 }}>
+                      ${discounted.toFixed(2)} <span style={{ color:'#9C8470', fontWeight:400 }}>(was ${basePrice})</span>
+                    </span>
+                  ) : null;
+                })()}
+              </div>
             </div>
             <button onClick={handleRenew} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? '…' : 'Renew'}</button>
           </div>

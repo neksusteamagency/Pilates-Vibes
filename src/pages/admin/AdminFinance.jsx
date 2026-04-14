@@ -72,28 +72,58 @@ function RowActions({ item, onEdit, onDelete }) {
 }
 
 // ── Edit Income/Expense Modal ──────────────────────────────────
-function EditEntryModal({ entry, onClose, onSave, isIncome }) {
+function EditEntryModal({ entry, onClose, onSave, onSaveProduct, isIncome, products }) {
+  const isPOS = entry.isPOSPurchase;
+
+  // Find linked product from the entry description
+  const linkedProduct = isPOS
+    ? products?.find(p => entry.description?.toLowerCase().includes(p.name.toLowerCase()))
+    : null;
+
   const [form, setForm] = useState({
     description: entry.description || '',
     amount: String(Math.abs(entry.amount) || ''),
     method: entry.method || 'Cash',
     date: entry.date || '',
+    // POS-specific fields
+    productName: linkedProduct?.name || '',
+    productEmoji: linkedProduct?.emoji || '📦',
+    productCategory: linkedProduct?.category || 'Drinks',
+    sellingPrice: String(linkedProduct?.price || ''),
+    lowStock: String(linkedProduct?.lowStock || '5'),
   });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setForm(p => ({...p,[k]:v}));
 
   async function handleSave() {
-    if (!form.description.trim()) return toast.error('Description required.');
-    if (!form.amount || isNaN(form.amount)) return toast.error('Enter a valid amount.');
     if (!form.date) return toast.error('Date required.');
+    if (!form.amount || isNaN(form.amount)) return toast.error('Enter a valid amount.');
     setSaving(true);
     try {
-      await onSave(entry.id, {
-        description: form.description,
-        amount: isIncome ? -Math.abs(Number(form.amount)) : Number(form.amount),
-        method: form.method,
-        date: form.date,
-      });
+      if (isPOS) {
+        await onSave(entry.id, {
+          amount: Number(form.amount),
+          method: form.method,
+          date: form.date,
+        });
+        if (linkedProduct && onSaveProduct) {
+          await onSaveProduct(linkedProduct.id, {
+            name: form.productName.trim() || linkedProduct.name,
+            emoji: form.productEmoji,
+            category: form.productCategory,
+            price: Number(form.sellingPrice),
+            lowStock: Number(form.lowStock) || 5,
+          });
+        }
+      } else {
+        if (!form.description.trim()) return toast.error('Description required.');
+        await onSave(entry.id, {
+          description: form.description,
+          amount: isIncome ? -Math.abs(Number(form.amount)) : Number(form.amount),
+          method: form.method,
+          date: form.date,
+        });
+      }
       toast.success('Updated!');
       onClose();
     } catch { toast.error('Failed to update.'); }
@@ -102,24 +132,77 @@ function EditEntryModal({ entry, onClose, onSave, isIncome }) {
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(42,26,14,0.45)', zIndex:1100, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }} onClick={onClose}>
-      <div style={{ background:'#FAF7F2', borderRadius:18, width:'100%', maxWidth:420, boxShadow:'0 8px 32px rgba(61,35,20,0.18)', border:'1px solid #E0D5C1' }} onClick={e => e.stopPropagation()}>
+      <div style={{ background:'#FAF7F2', borderRadius:18, width:'100%', maxWidth:460, maxHeight:'92vh', overflowY:'auto', boxShadow:'0 8px 32px rgba(61,35,20,0.18)', border:'1px solid #E0D5C1' }} onClick={e => e.stopPropagation()}>
         <div style={{ padding:'20px 24px 16px', borderBottom:'1px solid #E0D5C1', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
-          <span style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.3rem', fontWeight:500, color:'#3D2314' }}>Edit {isIncome ? 'Income' : 'Expense'}</span>
+          <span style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1.3rem', fontWeight:500, color:'#3D2314' }}>
+            {isPOS ? 'Edit POS Product' : `Edit ${isIncome ? 'Income' : 'Expense'}`}
+          </span>
           <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'#9C8470' }}><X size={18}/></button>
         </div>
         <div style={{ padding:'20px 24px 24px', display:'flex', flexDirection:'column', gap:14 }}>
-          <Field label="Description"><input style={inp} value={form.description} onChange={e => set('description', e.target.value)}/></Field>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
-            <Field label="Amount (USD)"><input style={inp} type="number" value={form.amount} onChange={e => set('amount', e.target.value)}/></Field>
-            <Field label="Date"><input style={inp} type="date" value={form.date} onChange={e => set('date', e.target.value)}/></Field>
-          </div>
-          <Field label="Payment Method">
-            <div style={{ display:'flex', gap:8 }}>
-              {['Cash','Whish'].map(m => (
-                <button key={m} onClick={() => set('method', m)} style={{ flex:1, padding:'8px 4px', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.76rem', fontWeight:500, background: form.method===m ? '#3D2314':'#F5F0E8', color: form.method===m ? '#F5F0E8':'#6B5744', border:`1.5px solid ${form.method===m ? '#3D2314':'#E0D5C1'}` }}>{m}</button>
-              ))}
-            </div>
-          </Field>
+
+          {isPOS ? (
+            <>
+              <div style={{ background:'#F0EAE3', borderRadius:10, padding:'10px 14px', fontSize:'0.8rem', color:'#6B5744' }}>
+                Changes to product details will update the POS listing for future sales.
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 64px', gap:12 }}>
+                <Field label="Product Name">
+                  <input style={inp} value={form.productName} onChange={e => set('productName', e.target.value)} placeholder="e.g. Still Water"/>
+                </Field>
+                <Field label="Emoji">
+                  <input style={inp} value={form.productEmoji} onChange={e => set('productEmoji', e.target.value)} placeholder="📦"/>
+                </Field>
+              </div>
+              <Field label="Category">
+                <select style={inp} value={form.productCategory} onChange={e => set('productCategory', e.target.value)}>
+                  {['Drinks','Snacks','Apparel','Equipment','Other'].map(c => <option key={c}>{c}</option>)}
+                </select>
+              </Field>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                <Field label="Selling Price ($)">
+                  <input style={inp} type="number" placeholder="0.00" value={form.sellingPrice} onChange={e => set('sellingPrice', e.target.value)}/>
+                </Field>
+                <Field label="Low Stock Alert">
+                  <input style={inp} type="number" placeholder="5" value={form.lowStock} onChange={e => set('lowStock', e.target.value)}/>
+                </Field>
+              </div>
+              <div style={{ borderTop:'1px solid #E0D5C1', paddingTop:14 }}>
+                <div style={{ fontSize:'0.72rem', textTransform:'uppercase', letterSpacing:'0.08em', color:'#9C8470', marginBottom:12 }}>Purchase Entry</div>
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                  <Field label="Total Cost ($)">
+                    <input style={inp} type="number" value={form.amount} onChange={e => set('amount', e.target.value)}/>
+                  </Field>
+                  <Field label="Purchase Date">
+                    <input style={inp} type="date" value={form.date} onChange={e => set('date', e.target.value)}/>
+                  </Field>
+                </div>
+              </div>
+              <Field label="Payment Method">
+                <div style={{ display:'flex', gap:8 }}>
+                  {['Cash','Whish'].map(m => (
+                    <button key={m} onClick={() => set('method', m)} style={{ flex:1, padding:'8px 4px', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.76rem', fontWeight:500, background: form.method===m ? '#3D2314':'#F5F0E8', color: form.method===m ? '#F5F0E8':'#6B5744', border:`1.5px solid ${form.method===m ? '#3D2314':'#E0D5C1'}` }}>{m}</button>
+                  ))}
+                </div>
+              </Field>
+            </>
+          ) : (
+            <>
+              <Field label="Description"><input style={inp} value={form.description} onChange={e => set('description', e.target.value)}/></Field>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
+                <Field label="Amount (USD)"><input style={inp} type="number" value={form.amount} onChange={e => set('amount', e.target.value)}/></Field>
+                <Field label="Date"><input style={inp} type="date" value={form.date} onChange={e => set('date', e.target.value)}/></Field>
+              </div>
+              <Field label="Payment Method">
+                <div style={{ display:'flex', gap:8 }}>
+                  {['Cash','Whish'].map(m => (
+                    <button key={m} onClick={() => set('method', m)} style={{ flex:1, padding:'8px 4px', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.76rem', fontWeight:500, background: form.method===m ? '#3D2314':'#F5F0E8', color: form.method===m ? '#F5F0E8':'#6B5744', border:`1.5px solid ${form.method===m ? '#3D2314':'#E0D5C1'}` }}>{m}</button>
+                  ))}
+                </div>
+              </Field>
+            </>
+          )}
+
           <button style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }} onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
         </div>
       </div>
@@ -357,7 +440,7 @@ export default function AdminFinance() {
 
   const currentMonth = format(new Date(), 'yyyy-MM');
   const { expenses, loading, fetchByMonth, addExpense, updateExpense, removeExpense, getMonthlyExpensesForMonth, getActualExpensesForMonth } = useExpenses();
-  const { products, addProduct, restockProduct } = usePOSProducts();
+  const { products, addProduct, restockProduct, updateProduct } = usePOSProducts();
   const { fetchSalesByRange, totalRevenue: posIncomeValue } = usePOSSales();
 
   useEffect(() => {
@@ -568,7 +651,7 @@ export default function AdminFinance() {
 
       {showExpModal && <LogExpenseModal onClose={() => setShowExpModal(false)} addExpense={addExpense} products={products} addProduct={addProduct} restockProduct={restockProduct} />}
       {showIncModal && <LogIncomeModal  onClose={() => setShowIncModal(false)}  addExpense={addExpense} />}
-      {editingEntry  && <EditEntryModal entry={editingEntry} isIncome={editIsIncome} onClose={() => setEditingEntry(null)} onSave={handleUpdate} />}
+      {editingEntry  && <EditEntryModal entry={editingEntry} isIncome={editIsIncome} onClose={() => setEditingEntry(null)} onSave={handleUpdate} onSaveProduct={updateProduct} products={products} />}
 
       <style>{`
         .row-actions { transition: opacity 0.15s; }

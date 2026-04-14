@@ -82,6 +82,8 @@ export function useClients() {
       expiry:            pkg.expiry,
       paymentMethod:     pkg.paymentMethod,
       paymentVerified:   pkg.paymentMethod === 'Cash' || pkg.paymentMethod === 'Whish' ? false : true,
+      paidAmount:        pkg.paidAmount ?? null,
+      discount:          pkg.discount   ?? 0,
       status:            'active',
       updatedAt:         serverTimestamp(),
     });

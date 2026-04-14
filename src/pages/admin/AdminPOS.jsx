@@ -285,7 +285,7 @@ export default function AdminPOS() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 16, marginBottom: 16 }} className="pos-main-resp">
 
         {/* Product Grid */}
-        <Card title="Products" action="+ Add Product" onAction={() => setShowAddProduct(true)}>
+        <Card title="Products">
           <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
             {CATEGORIES.map(cat => (
               <button key={cat} onClick={() => setCategory(cat)} style={{
@@ -391,7 +391,7 @@ export default function AdminPOS() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  {['Product', 'Category', 'Price', 'Stock', ''].map(h => (
+                  {['Product', 'Category', 'Price', 'Stock'].map(h => (
                     <th key={h} style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.1em', color: '#9C8470', padding: '8px 10px', textAlign: 'left', borderBottom: '1.5px solid #E0D5C1', fontWeight: 500 }}>{h}</th>
                   ))}
                 </tr>
@@ -412,11 +412,7 @@ export default function AdminPOS() {
                           {p.stock}
                         </span>
                       </td>
-                      <td style={{ padding: '10px 10px', borderBottom: '1px solid #E0D5C1' }}>
-                        <button onClick={() => setShowRestock(p)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#A0673A', display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.75rem', fontFamily: "'DM Sans', sans-serif" }}>
-                          <Edit2 size={12} /> Restock
-                        </button>
-                      </td>
+                      <td style={{ padding: '10px 10px', borderBottom: '1px solid #E0D5C1' }}></td>
                     </tr>
                   );
                 })}
