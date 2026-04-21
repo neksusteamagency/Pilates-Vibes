@@ -214,7 +214,7 @@ function NewClientModal({ onClose, addClient }) {
 }
 
 // ── Client Detail Modal ───────────────────────────────────────
-function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClient, renewPackage, verifyPayment, updatePackageExpiry, addExpense }) {
+function ClientModal({ client, onClose, updateClient, removeClient, freezeClient, unfreezeClient, renewPackage, verifyPayment, updatePackageExpiry, addExpense }) {
   const [tab,          setTab]          = useState('profile');
   const [freezeStart,  setFreezeStart]  = useState('');
   const [freezeEnd,    setFreezeEnd]    = useState('');
@@ -229,6 +229,7 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
   const [history,      setHistory]      = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [showPaidConfirm, setShowPaidConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const isRenewCustom = false; // custom packages removed
 
@@ -369,6 +370,16 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
     finally { setSaving(false); }
   }
 
+  async function handleDelete() {
+    setSaving(true);
+    try {
+      await removeClient(client.id);
+      toast.success(`${client.name} has been deleted.`);
+      onClose();
+    } catch { toast.error('Failed to delete client.'); }
+    finally { setSaving(false); }
+  }
+
   return (
     <Overlay onClose={onClose}>
       {/* Header */}
@@ -395,6 +406,9 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
             <button onClick={() => setEditMode(true)} style={{ background:'#F5F0E8', border:'1.5px solid #E0D5C1', borderRadius:8, padding:'5px 10px', cursor:'pointer', display:'flex', alignItems:'center', gap:4, fontSize:'0.76rem', color:'#6B5744', fontFamily:"'DM Sans',sans-serif" }}>
               <Edit2 size={12}/> Edit
             </button>
+            <button onClick={() => setShowDeleteConfirm(true)} style={{ background:'#F7EDED', border:'1.5px solid #E8C8C8', borderRadius:8, padding:'5px 10px', cursor:'pointer', display:'flex', alignItems:'center', gap:4, fontSize:'0.76rem', color:'#8C3A3A', fontFamily:"'DM Sans',sans-serif" }}>
+              <X size={12}/> Delete
+            </button>
             <button onClick={onClose} style={{ background:'none', border:'none', cursor:'pointer', color:'#9C8470', padding:4 }}><X size={18}/></button>
           </div>
         </div>
@@ -404,6 +418,17 @@ function ClientModal({ client, onClose, updateClient, freezeClient, unfreezeClie
           ))}
         </div>
       </div>
+
+      {showDeleteConfirm && (
+        <ConfirmDialog
+          title="Delete Client"
+          message={`Are you sure you want to permanently delete ${client.name}? This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={handleDelete}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
 
       <div style={{ padding:'20px 24px 24px', maxHeight:'60vh', overflowY:'auto' }}>
 
@@ -707,7 +732,7 @@ const btnPrimary = { width:'100%', padding:'12px', background:'#3D2314', color:'
 
 // ── Main Page ─────────────────────────────────────────────────
 export default function AdminClients() {
-  const { clients, loading, error, addClient, updateClient, freezeClient, unfreezeClient, renewPackage, verifyPayment, updatePackageExpiry } = useClients();
+  const { clients, loading, error, addClient, updateClient, removeClient, freezeClient, unfreezeClient, renewPackage, verifyPayment, updatePackageExpiry } = useClients();
   const { addExpense } = useExpenses();
   const [search,         setSearch]         = useState('');
   const [statusFilter,   setStatusFilter]   = useState('All');
@@ -840,6 +865,7 @@ export default function AdminClients() {
           client={selectedClient}
           onClose={() => setSelectedClient(null)}
           updateClient={updateClient}
+          removeClient={removeClient}
           freezeClient={freezeClient}
           unfreezeClient={unfreezeClient}
           renewPackage={renewPackage}
