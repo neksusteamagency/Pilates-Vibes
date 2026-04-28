@@ -7,6 +7,12 @@ import { db } from '../../firebase/config';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { format, formatDistanceToNow } from 'date-fns';
 
+function fmt12(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  return `${h % 12 || 12}:${String(m).padStart(2,'0')} ${h >= 12 ? 'PM' : 'AM'}`;
+}
+
 const TYPE_ICONS = {
   'low-sessions':   { icon: AlertTriangle, color:'#8C3A3A', bg:'#F7EDED' },
   'low-attendance': { icon: AlertTriangle, color:'#7A6020', bg:'#F5F1E0' },
@@ -25,6 +31,47 @@ export default function AdminNotifications() {
     try { return new Set(JSON.parse(localStorage.getItem('pv_read_notifs') || '[]')); } catch { return new Set(); }
   });
   const [filter, setFilter] = useState('all');
+
+  // ── Persistent new-booking banners (not dismissable until admin closes) ──
+  const [newBookingAlerts, setNewBookingAlerts] = useState([]);
+  const [dismissedAlertIds, setDismissedAlertIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('pv_dismissed_alerts') || '[]')); } catch { return new Set(); }
+  });
+
+  useEffect(() => {
+    // Listen for bookings created in the last 60 minutes so we don't flood on first load
+    const since = new Date(Date.now() - 60 * 60 * 1000);
+    const q = query(
+      collection(db, 'bookings'),
+      orderBy('createdAt', 'desc'),
+      limit(20)
+    );
+    const unsub = onSnapshot(q, snap => {
+      const fresh = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (
+          data.status === 'confirmed' &&
+          data.createdAt?.toDate &&
+          data.createdAt.toDate() >= since
+        ) {
+          fresh.push({ id: d.id, ...data });
+        }
+      });
+      setNewBookingAlerts(fresh);
+    });
+    return unsub;
+  }, []);
+
+  function dismissAlert(id) {
+    setDismissedAlertIds(prev => {
+      const next = new Set([...prev, id]);
+      localStorage.setItem('pv_dismissed_alerts', JSON.stringify([...next]));
+      return next;
+    });
+  }
+
+  const visibleAlerts = newBookingAlerts.filter(b => !dismissedAlertIds.has(b.id));
 
   const today    = format(new Date(), 'yyyy-MM-dd');
   const todayDay = (new Date().getDay() + 6) % 7;
@@ -192,6 +239,55 @@ export default function AdminNotifications() {
 
   return (
     <div style={{ padding:'28px 32px 40px' }}>
+
+      {/* ── Persistent new-booking banners ── */}
+      {visibleAlerts.length > 0 && (
+        <div style={{ marginBottom:20, display:'flex', flexDirection:'column', gap:8 }}>
+          {visibleAlerts.map(b => {
+            const client = clients.find(c => c.id === b.clientId);
+            const cls    = classes.find(c => c.id === b.classId);
+            const bookedAt = b.createdAt?.toDate ? formatDistanceToNow(b.createdAt.toDate(), { addSuffix: true }) : '';
+            return (
+              <div key={b.id} style={{
+                display:'flex', alignItems:'flex-start', gap:12,
+                padding:'14px 18px',
+                borderRadius:12,
+                background:'#EEF3E6',
+                border:'2px solid #4E6A2E',
+                boxShadow:'0 4px 16px rgba(78,106,46,0.18)',
+                position:'relative',
+              }}>
+                <div style={{ width:36, height:36, borderRadius:'50%', background:'#C8D9B0', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, marginTop:2 }}>
+                  <Check size={16} color='#4E6A2E'/>
+                </div>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:600, fontSize:'0.92rem', color:'#2A1A0E', marginBottom:3 }}>
+                    🎉 New Booking — {client?.name || b.clientId}
+                  </div>
+                  <div style={{ fontSize:'0.82rem', color:'#4E6A2E', lineHeight:1.5 }}>
+                    {cls ? `${cls.name} with ${cls.trainer} · ${cls.date} at ${fmt12(cls.time)}` : `Class ID: ${b.classId}`}
+                    {bookedAt && <span style={{ color:'#7A9A50', marginLeft:8 }}>· {bookedAt}</span>}
+                  </div>
+                  {client?.phone && (
+                    <a
+                      href={`https://wa.me/${client.phone.replace(/\D/g,'')}?text=${encodeURIComponent(`Hi ${client.name}! Your booking for ${cls?.name || 'the class'} has been confirmed. See you at Pilates Vibes! 🌿`)}`}
+                      target="_blank" rel="noreferrer"
+                      style={{ display:'inline-flex', alignItems:'center', gap:5, marginTop:8, padding:'5px 11px', background:'#F0FAF4', border:'1.5px solid #B8DFC8', borderRadius:7, color:'#1A5C35', textDecoration:'none', fontSize:'0.78rem', fontWeight:500, fontFamily:"'DM Sans',sans-serif" }}>
+                      <MessageSquare size={12}/> WhatsApp {client.name.split(' ')[0]}
+                    </a>
+                  )}
+                </div>
+                <button
+                  onClick={() => dismissAlert(b.id)}
+                  title="Dismiss"
+                  style={{ background:'rgba(78,106,46,0.12)', border:'none', borderRadius:'50%', width:26, height:26, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', flexShrink:0, color:'#4E6A2E' }}>
+                  <X size={13}/>
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20, flexWrap:'wrap', gap:10 }}>
         <div style={{ display:'flex', gap:6 }}>
           {[['all','All'],['unread','Unread'],['urgent','Urgent']].map(([val,label]) => (

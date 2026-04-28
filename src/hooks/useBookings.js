@@ -35,10 +35,13 @@ export function useBookings(filters = {}) {
     const batch      = writeBatch(db);
     const bookingRef = doc(collection(db, 'bookings'));
 
+    const hasPackage = clientData?.sessionsRemaining != null && clientData.sessionsRemaining > 0;
+
     batch.set(bookingRef, {
       classId, clientId, weekOf,
       status:        'confirmed',
-      paymentStatus: 'paid',
+      paymentStatus: hasPackage ? 'paid' : 'pending',
+      paymentMethod: hasPackage ? 'package' : null,
       createdAt:     serverTimestamp(),
     });
 
@@ -48,6 +51,19 @@ export function useBookings(filters = {}) {
         booked:    newBooked,
         status:    newBooked >= classData.capacity ? 'full' : 'available',
         updatedAt: serverTimestamp(),
+      });
+    }
+
+    // Deduct a session from the client's package if they have one
+    if (hasPackage) {
+      const newRemaining = clientData.sessionsRemaining - 1;
+      const newUsed      = (clientData.sessionsUsed || 0) + 1;
+      const newStatus    = newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active';
+      batch.update(doc(db, 'clients', clientId), {
+        sessionsRemaining: newRemaining,
+        sessionsUsed:      newUsed,
+        status:            newStatus,
+        updatedAt:         serverTimestamp(),
       });
     }
 

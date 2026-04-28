@@ -380,6 +380,45 @@ function ClientModal({ client, onClose, updateClient, removeClient, freezeClient
     finally { setSaving(false); }
   }
 
+  async function handleReturnSession() {
+    if (client.sessionsRemaining == null) return toast.error("Can't return a session on an unlimited package.");
+    if (client.sessionsTotal != null && client.sessionsRemaining >= client.sessionsTotal)
+      return toast.error('Sessions are already at the package maximum.');
+    const newRemaining = client.sessionsRemaining + 1;
+    const newUsed      = Math.max(0, (client.sessionsUsed || 0) - 1);
+    const newStatus    = newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active';
+    setSaving(true);
+    try {
+      await updateClient(client.id, {
+        sessionsRemaining: newRemaining,
+        sessionsUsed:      newUsed,
+        status:            newStatus,
+      });
+      toast.success('Session returned successfully.');
+      onClose();
+    } catch { toast.error('Failed to return session.'); }
+    finally { setSaving(false); }
+  }
+
+  async function handleConductSession() {
+    if (client.sessionsRemaining == null) return toast.error("Can't deduct from an unlimited package.");
+    if (client.sessionsRemaining <= 0) return toast.error('No sessions remaining to deduct.');
+    const newRemaining = client.sessionsRemaining - 1;
+    const newUsed      = (client.sessionsUsed || 0) + 1;
+    const newStatus    = newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active';
+    setSaving(true);
+    try {
+      await updateClient(client.id, {
+        sessionsRemaining: newRemaining,
+        sessionsUsed:      newUsed,
+        status:            newStatus,
+      });
+      toast.success('Session conducted successfully.');
+      onClose();
+    } catch { toast.error('Failed to conduct session.'); }
+    finally { setSaving(false); }
+  }
+
   return (
     <Overlay onClose={onClose}>
       {/* Header */}
@@ -591,6 +630,42 @@ function ClientModal({ client, onClose, updateClient, removeClient, freezeClient
                 <ChevronRight size={13}/>
               </a>
             ))}
+
+            <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1rem', color:'#3D2314', marginTop:8, marginBottom:4 }}>Sessions</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+              <div style={{ background:'#F5F0E8', border:'1.5px solid #E0D5C1', borderRadius:12, padding:16, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                <div>
+                  <div style={{ fontWeight:500, fontSize:'0.88rem', color:'#3D2314', marginBottom:3 }}>Conduct a Session</div>
+                  <div style={{ fontSize:'0.78rem', color:'#9C8470' }}>
+                    {client.sessionsRemaining != null
+                      ? `${client.sessionsRemaining} session${client.sessionsRemaining !== 1 ? 's' : ''} remaining`
+                      : 'Unlimited package'}
+                  </div>
+                </div>
+                <button
+                  onClick={handleConductSession}
+                  disabled={saving || client.sessionsRemaining == null || client.sessionsRemaining <= 0}
+                  style={{ padding:'8px 16px', background: (client.sessionsRemaining == null || client.sessionsRemaining <= 0) ? '#F0EAE3' : '#3D2314', color: (client.sessionsRemaining == null || client.sessionsRemaining <= 0) ? '#C4AE8F' : '#F5F0E8', border:'none', borderRadius:8, cursor: (client.sessionsRemaining == null || client.sessionsRemaining <= 0) ? 'not-allowed' : 'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.82rem', fontWeight:500, opacity: saving ? 0.6 : 1, whiteSpace:'nowrap' }}>
+                  − Conduct
+                </button>
+              </div>
+              <div style={{ background:'#F5F0E8', border:'1.5px solid #E0D5C1', borderRadius:12, padding:16, display:'flex', alignItems:'center', justifyContent:'space-between' }}>
+                <div>
+                  <div style={{ fontWeight:500, fontSize:'0.88rem', color:'#3D2314', marginBottom:3 }}>Return a Session</div>
+                  <div style={{ fontSize:'0.78rem', color:'#9C8470' }}>
+                    {client.sessionsRemaining != null
+                      ? `${client.sessionsRemaining} / ${client.sessionsTotal} remaining`
+                      : 'Unlimited package — no sessions to return'}
+                  </div>
+                </div>
+                <button
+                  onClick={handleReturnSession}
+                  disabled={saving || client.sessionsRemaining == null || client.sessionsRemaining >= client.sessionsTotal}
+                  style={{ padding:'8px 16px', background: (client.sessionsRemaining == null || client.sessionsRemaining >= client.sessionsTotal) ? '#F0EAE3' : '#3D2314', color: (client.sessionsRemaining == null || client.sessionsRemaining >= client.sessionsTotal) ? '#C4AE8F' : '#F5F0E8', border:'none', borderRadius:8, cursor: (client.sessionsRemaining == null || client.sessionsRemaining >= client.sessionsTotal) ? 'not-allowed' : 'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.82rem', fontWeight:500, opacity: saving ? 0.6 : 1, whiteSpace:'nowrap' }}>
+                  + Return
+                </button>
+              </div>
+            </div>
 
             <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1rem', color:'#3D2314', marginTop:8, marginBottom:4 }}>Subscription</div>
             {!client.isFrozen ? (

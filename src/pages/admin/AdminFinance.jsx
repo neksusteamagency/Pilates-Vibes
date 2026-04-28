@@ -6,9 +6,19 @@ import { usePOSSales, usePOSProducts } from '../../hooks/usePOS';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
-const EXPENSE_CATEGORIES = ['Trainer Payroll','Rent','Equipment','Utilities','Marketing','Other','POS Product'];
-const CATEGORY_COLORS    = { 'Trainer Payroll':'#7C8C5E', 'Rent':'#A0673A', 'Equipment':'#C4AE8F', 'Utilities':'#3D2314', 'Marketing':'#9C8470', 'Other':'#6B5744', 'POS Product':'#4E6A2E' };
-
+const EXPENSE_CATEGORIES = ['Trainer Payroll','Rent','Equipment','generator','internet','concierge','cleaning','Marketing','Other','POS Product'];
+const CATEGORY_COLORS    = { 
+  'Trainer Payroll':'#7C8C5E', 
+  'Rent':'#A0673A', 
+  'Equipment':'#C4AE8F', 
+  'generator':'#3D2314',   
+  'internet':'#2C5F8A', 
+  'concierge':'#9B6A42', 
+  'cleaning':'#5E8C6A', 
+  'Marketing':'#9C8470', 
+  'Other':'#6B5744', 
+  'POS Product':'#4E6A2E' 
+};
 function methodBadge(method) {
   const map = { 'Cash':{ bg:'#EEF3E6', color:'#4E6A2E' }, 'Whish':{ bg:'#EDF0F6', color:'#3A5A8C' } };
   const s = map[method] || { bg:'#F0EAE3', color:'#3D2314' };

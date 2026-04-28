@@ -405,11 +405,12 @@ export default function ClientBook() {
     (clientDoc?.sessionsRemaining ?? 0) <= 0;
 
   function pickClass(cls) {
-      const classDateTime = new Date(`${cls.date}T${cls.time}:00`);
-  if (classDateTime <= new Date()) {
-    toast.error('This class has already started or passed.');
-    return;
-  }
+    const classDateTime = new Date(`${cls.date}T${cls.time}:00`);
+    const cutoff = new Date(classDateTime.getTime() - 30 * 60 * 1000);
+    if (new Date() >= cutoff) {
+      toast.error('Bookings close 30 minutes before the class starts.');
+      return;
+    }
     if (cls.status === 'full' && cls.booked >= (cls.capacity + 3)) return;
     if (alreadyBooked(cls.id)) { toast.error('You already have this class booked.'); return; }
 
@@ -464,7 +465,7 @@ export default function ClientBook() {
   }
 
   const waMsg = selected
-    ? `Hi! I'd like to confirm my booking at Pilates Vibes:\n${selected.name} with ${selected.trainer}\n${format(addDays(weekStart, selected.day), 'EEE, MMM d')} at ${selected.time}\n\nPlease note: any changes must be made at least 24 hours in advance, otherwise a session will be deducted. 🌿`
+    ? `Hi! I'd like to confirm my booking at Pilates Vibes:\n${selected.name} with ${selected.trainer}\n${format(addDays(weekStart, selected.day), 'EEE, MMM d')} at ${selected.time}\n\nPlease note: any changes must be made at least 12 hours in advance, otherwise a session will be deducted. 🌿`
     : '';
 
   const isWaitlist = selected?.status === 'full';
@@ -605,7 +606,7 @@ export default function ClientBook() {
           )}
 
           <div style={{ background:'#EEF3E6', border:'1px solid #C8D9B0', borderRadius:8, padding:'10px 14px', fontSize:'0.8rem', color:'#4E6A2E', marginBottom:18 }}>
-            📋 Any changes must be made via the studio's number at least <strong>24 hours in advance</strong>, otherwise a session will be automatically deducted.
+            📋 Any changes must be made via the studio's number at least <strong>12 hours in advance</strong>, otherwise a session will be automatically deducted.
           </div>
 
           <div style={{ display:'flex', gap:10 }}>
@@ -633,7 +634,7 @@ export default function ClientBook() {
           <div style={{ background:'#EEF3E6', border:'1px solid #C8D9B0', borderRadius:8, padding:'11px 14px', fontSize:'0.82rem', color:'#4E6A2E', textAlign:'left', marginBottom:20 }}>
             {isWaitlist
               ? "⏳ We'll notify you if a spot opens. You'll have 1 hour to confirm before it moves to the next person."
-              : '📋 Any changes must be made at least 24 hours in advance via the studio\'s number, otherwise a session will be deducted.'}
+              : '📋 Any changes must be made at least 12 hours in advance via the studio\'s number, otherwise a session will be deducted.'}
           </div>
 
           <div style={{ display:'flex', flexDirection:'column', gap:8 }}>

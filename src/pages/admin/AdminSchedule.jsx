@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus, X, Users, Clock, User, Trash2, AlertTriangle, Edit2, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, X, Users, Clock, User, Trash2, AlertTriangle, Edit2, Check, RefreshCw } from 'lucide-react';
 import { format, addDays, startOfWeek } from 'date-fns';
-import { useClasses, generateTimeSlots } from '../../hooks/useClasses';
+import { useClasses, generateTimeSlots, resolveClassesForWeek } from '../../hooks/useClasses';
 import { useClients } from '../../hooks/useClients';
 import { useBookings } from '../../hooks/useBookings';
 import { useTrainers } from '../../hooks/useTrainers';
@@ -10,6 +10,16 @@ import { doc, writeBatch } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+// Helper: convert YYYY-MM-DD to day index (0=Monday,6=Sunday)
+function getDayIndexFromDate(dateStr) {
+  if (!dateStr) return 0;
+  const date = new Date(dateStr + 'T12:00:00'); // avoid UTC timezone shifts
+  const jsDay = date.getDay();                 // 0=Sun, 1=Mon ... 6=Sat
+  // Map: Mon=1 → 0, Tue=2→1, Wed=3→2, Thu=4→3, Fri=5→4, Sat=6→5, Sun=0→6
+  return jsDay === 0 ? 6 : jsDay - 1;
+}
+
 const ALL_TIME_SLOTS = generateTimeSlots();
 
 function fmt12(time24) {
@@ -18,10 +28,12 @@ function fmt12(time24) {
   return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
 }
 
-const inputStyle = { width: '100%', padding: '10px 13px', border: '1.5px solid #E0D5C1', borderRadius: 8, background: '#F5F0E8', fontFamily: "'DM Sans',sans-serif", fontSize: '0.88rem', color: '#2A1A0E', outline: 'none', boxSizing: 'border-box' };
-const labelStyle = { display: 'block', fontSize: '0.75rem', fontWeight: 500, color: '#6B5744', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 };
-const btnPrimary = { width: '100%', padding: '12px', background: '#3D2314', color: '#F5F0E8', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.9rem', fontWeight: 500, transition: 'opacity 0.2s' };
-const navBtn     = { width: 32, height: 32, borderRadius: '50%', background: '#FAF7F2', border: '1.5px solid #E0D5C1', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s', color: '#6B5744' };
+const inputStyle   = { width: '100%', padding: '10px 13px', border: '1.5px solid #E0D5C1', borderRadius: 8, background: '#F5F0E8', fontFamily: "'DM Sans',sans-serif", fontSize: '0.88rem', color: '#2A1A0E', outline: 'none', boxSizing: 'border-box' };
+const labelStyle   = { display: 'block', fontSize: '0.75rem', fontWeight: 500, color: '#6B5744', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 };
+const btnPrimary   = { width: '100%', padding: '12px', background: '#3D2314', color: '#F5F0E8', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.9rem', fontWeight: 500, transition: 'opacity 0.2s' };
+const navBtn       = { width: 32, height: 32, borderRadius: '50%', background: '#FAF7F2', border: '1.5px solid #E0D5C1', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s', color: '#6B5744' };
+const btnDanger    = { padding: '10px', background: '#8C3A3A', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.85rem', fontWeight: 500 };
+const btnSecondary = { padding: '10px', background: '#F5F0E8', color: '#6B5744', border: '1.5px solid #E0D5C1', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.85rem' };
 
 // ── Class Form (shared by new + edit) ───────────────────────
 function ClassForm({ initial, trainers, onSave, onCancel, saving, isEdit }) {
@@ -60,11 +72,22 @@ function ClassForm({ initial, trainers, onSave, onCancel, saving, isEdit }) {
       </div>
       {!isEdit && (
         <>
-          {/* BUG FIX: Date picker — lets admin choose any start date, not just current week */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={labelStyle}>Start Date {form.isRecurring ? '(first class)' : ''}</label>
-            <input type="date" value={form.startDate || ''} onChange={e => set('startDate', e.target.value)} style={inputStyle} />
-          </div>
+<div style={{ marginBottom: 14 }}>
+  <label style={labelStyle}>Start Date {form.isRecurring ? '(first class)' : ''}</label>
+  <input
+    type="date"
+    value={form.startDate || ''}
+    onChange={e => {
+      const newDate = e.target.value;
+      set('startDate', newDate);
+      if (newDate) {
+        const newDay = getDayIndexFromDate(newDate);
+        set('day', newDay);
+      }
+    }}
+    style={inputStyle}
+  />
+</div>
           <div style={{ marginBottom: 20 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <input
@@ -73,14 +96,22 @@ function ClassForm({ initial, trainers, onSave, onCancel, saving, isEdit }) {
                 onChange={e => set('isRecurring', e.target.checked)}
                 style={{ width: 18, height: 18, cursor: 'pointer' }}
               />
-              <span style={{ fontSize: '0.85rem', color: '#3D2314' }}>Recurring weekly (creates class for next 8 weeks)</span>
+              <span style={{ fontSize: '0.85rem', color: '#3D2314', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <RefreshCw size={13} style={{ color: '#6B5744' }} />
+                Recurring weekly — permanent (until deleted)
+              </span>
             </label>
+            {form.isRecurring && (
+              <div style={{ marginTop: 8, padding: '8px 12px', background: '#EEF3E6', border: '1px solid #C8D9B0', borderRadius: 7, fontSize: '0.78rem', color: '#4E6A2E' }}>
+                This class will appear every week indefinitely. You can delete it (or stop it from a specific date) at any time.
+              </div>
+            )}
           </div>
         </>
       )}
       <div style={{ display: 'flex', gap: 8 }}>
         {onCancel && (
-          <button onClick={onCancel} style={{ flex: 1, padding: '12px', background: '#F5F0E8', color: '#6B5744', border: '1.5px solid #E0D5C1', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.9rem' }}>
+          <button onClick={onCancel} style={{ flex: 1, ...btnSecondary }}>
             Cancel
           </button>
         )}
@@ -92,15 +123,143 @@ function ClassForm({ initial, trainers, onSave, onCancel, saving, isEdit }) {
   );
 }
 
+// ── Smart Delete Modal ────────────────────────────────────────
+// Shows contextual delete options depending on whether the class is recurring,
+// has other classes at the same slot, or shares a trainer with other classes.
+function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurrence, endRecurringFrom, deleteRecurringRule, deleteByTrainer, deleteByDayAndTime }) {
+  const [deleting, setDeleting] = useState(false);
+
+  const isRecurring     = !!cls.isRecurring;
+  const occurrenceDate  = cls._occurrenceDate || cls.date;
+
+  async function run(fn) {
+    setDeleting(true);
+    try {
+      await fn();
+      toast.success('Deleted successfully.');
+      onDeleted();
+      onClose();
+    } catch {
+      toast.error('Failed to delete. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  // Option button component used below
+  function Option({ label, sub, onConfirm, danger }) {
+    return (
+      <button
+        disabled={deleting}
+        onClick={() => run(onConfirm)}
+        style={{
+          width: '100%', textAlign: 'left', padding: '12px 14px',
+          background: danger ? '#FDF2F2' : '#F5F0E8',
+          border: `1.5px solid ${danger ? '#DDB0B0' : '#E0D5C1'}`,
+          borderRadius: 10, cursor: deleting ? 'not-allowed' : 'pointer',
+          marginBottom: 8, opacity: deleting ? 0.6 : 1,
+          fontFamily: "'DM Sans',sans-serif",
+        }}
+      >
+        <div style={{ fontSize: '0.88rem', fontWeight: 500, color: danger ? '#8C3A3A' : '#2A1A0E' }}>{label}</div>
+        {sub && <div style={{ fontSize: '0.75rem', color: '#9C8470', marginTop: 3 }}>{sub}</div>}
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(42,26,14,0.7)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div style={{ background: '#FAF7F2', borderRadius: 18, maxWidth: 400, width: '100%', padding: 24, border: '1px solid #E0D5C1', boxShadow: '0 8px 32px rgba(61,35,20,0.2)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.3rem', fontWeight: 500, color: '#3D2314' }}>
+            Delete Class
+          </div>
+          <button onClick={onClose} disabled={deleting} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9C8470', padding: 4 }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div style={{ fontSize: '0.82rem', color: '#6B5744', marginBottom: 18 }}>
+          How would you like to delete <strong>{cls.name}</strong>?
+        </div>
+
+        {/* Always available: delete just this one */}
+        {isRecurring ? (
+          <Option
+            label="Delete only this week's class"
+            sub={`Removes the ${occurrenceDate} occurrence. The rest of the series continues.`}
+            onConfirm={() => cancelOccurrence(cls._recurringId || cls.id, occurrenceDate, cls.exceptions || [])}
+          />
+        ) : (
+          <Option
+            label="Delete this class"
+            sub="Permanently removes this single class."
+            onConfirm={() => removeClass(cls.id)}
+            danger
+          />
+        )}
+
+        {/* Recurring-specific options */}
+        {isRecurring && (
+          <>
+            <Option
+              label="Delete this and all future occurrences"
+              sub={`Stops the series from ${occurrenceDate} onwards.`}
+              onConfirm={() => endRecurringFrom(cls._recurringId || cls.id, occurrenceDate)}
+              danger
+            />
+            <Option
+              label="Delete the entire recurring series"
+              sub="Removes all past and future occurrences of this class."
+              onConfirm={() => deleteRecurringRule(cls._recurringId || cls.id)}
+              danger
+            />
+          </>
+        )}
+
+        {/* Trainer-wide delete */}
+        {cls.trainer && (
+          <Option
+            label={`Delete all classes by ${cls.trainer}`}
+            sub="Removes every class (recurring or one-off) assigned to this trainer."
+            onConfirm={() => deleteByTrainer(cls.trainer)}
+            danger
+          />
+        )}
+
+        {/* Day + time slot delete */}
+        <Option
+          label={`Delete all ${DAYS_OF_WEEK[cls.day]} ${fmt12(cls.time)} classes`}
+          sub="Removes every class at this day and time, regardless of trainer."
+          onConfirm={() => deleteByDayAndTime(cls.day, cls.time)}
+          danger
+        />
+
+        <button onClick={onClose} disabled={deleting} style={{ ...btnSecondary, width: '100%', marginTop: 4 }}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Class Modal ──────────────────────────────────────────────
-function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addClass, addRecurringClasses, updateClass, removeClass, addBooking, addToWaitlist, approveWaitlist, rejectWaitlist, onClassCancelled }) {
-  const [tab, setTab] = useState('details');
-  const [selectedClient, setSelectedClient] = useState('');
-  const [saving, setSaving] = useState(false);
+function ClassModal({
+  cls, weekStart, onClose,
+  clients, trainers, classes,
+  addClass, addRecurringClass,
+  updateClass, removeClass,
+  cancelOccurrence, endRecurringFrom, deleteRecurringRule,
+  deleteByTrainer, deleteByDayAndTime,
+  addBooking, addToWaitlist, approveWaitlist, rejectWaitlist,
+  onClassCancelled,
+}) {
+  const [tab,               setTab]               = useState('details');
+  const [selectedClient,    setSelectedClient]    = useState('');
+  const [saving,            setSaving]            = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [editMode, setEditMode] = useState(false);
+  const [showDeleteModal,   setShowDeleteModal]   = useState(false);
+  const [cancelling,        setCancelling]        = useState(false);
+  const [editMode,          setEditMode]          = useState(false);
 
   const { bookings } = useBookings({ classId: cls.id !== 'new' ? cls.id : undefined });
   const isNew = cls.id === 'new';
@@ -163,19 +322,17 @@ function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addCl
   async function handleCreateClass(form) {
     if (!form.name.trim()) return toast.error('Class name is required.');
     if (!form.trainer)     return toast.error('Please select a trainer.');
-    // BUG FIX: Use the admin-selected start date. Fall back to current week's
-    // matching day only if no date was chosen (keeps backward compat).
     const baseDate = form.startDate
-      ? new Date(form.startDate + 'T12:00:00') // noon avoids DST offset issues
+      ? new Date(form.startDate + 'T12:00:00')
       : addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), form.day);
     setSaving(true);
     try {
       if (form.isRecurring) {
-        await addRecurringClasses(
+        await addRecurringClass(
           { name: form.name.trim(), trainer: form.trainer, time: form.time, capacity: Number(form.capacity), day: form.day },
-          baseDate, form.day, 8
+          baseDate
         );
-        toast.success('Recurring class created! (8 weeks)');
+        toast.success('Recurring class created! Appears every week from the start date.');
       } else {
         await addClass({
           name: form.name.trim(), trainer: form.trainer, time: form.time,
@@ -187,17 +344,6 @@ function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addCl
       onClose();
     } catch { toast.error('Failed to create class.'); }
     finally   { setSaving(false); }
-  }
-
-  async function handleDeleteClass() {
-    setCancelling(true);
-    try {
-      await removeClass(cls.id);
-      toast.success('Class deleted.');
-      if (onClassCancelled) onClassCancelled();
-      onClose();
-    } catch { toast.error('Failed to delete class.'); }
-    finally   { setCancelling(false); setShowDeleteConfirm(false); }
   }
 
   async function handleCancelClass() {
@@ -238,7 +384,14 @@ function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addCl
         {/* Header */}
         <div style={{ padding: '22px 24px 16px', borderBottom: '1px solid #E0D5C1', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
-            <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.4rem', fontWeight: 500, color: '#3D2314' }}>{isNew ? 'New Class' : cls.name}</div>
+            <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.4rem', fontWeight: 500, color: '#3D2314', display: 'flex', alignItems: 'center', gap: 8 }}>
+              {isNew ? 'New Class' : cls.name}
+              {!isNew && cls.isRecurring && (
+                <span style={{ fontSize: '0.65rem', padding: '2px 7px', background: '#EEF3E6', color: '#4E6A2E', border: '1px solid #C8D9B0', borderRadius: 20, fontFamily: "'DM Sans',sans-serif", fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <RefreshCw size={9} /> Recurring
+                </span>
+              )}
+            </div>
             {!isNew && (
               <div style={{ fontSize: '0.8rem', color: '#9C8470', marginTop: 3 }}>
                 {format(addDays(weekStart, cls.day), 'EEE, MMM d')} · {fmt12(cls.time)} · {cls.trainer}
@@ -335,7 +488,7 @@ function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addCl
                 <button onClick={() => setShowCancelConfirm(true)} style={{ flex: 1, padding: '10px', background: '#F5F0E8', color: '#8C3A3A', border: '1.5px solid #DDB0B0', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.85rem', fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                   Cancel Class
                 </button>
-                <button onClick={() => setShowDeleteConfirm(true)} style={{ flex: 1, padding: '10px', background: '#8C3A3A', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.85rem', fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <button onClick={() => setShowDeleteModal(true)} style={{ flex: 1, padding: '10px', background: '#8C3A3A', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: "'DM Sans',sans-serif", fontSize: '0.85rem', fontWeight: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                   <Trash2 size={14} /> Delete Class
                 </button>
               </div>
@@ -359,7 +512,7 @@ function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addCl
             </div>
           )}
 
-          {/* WAITLIST — admin choose approve/reject */}
+          {/* WAITLIST */}
           {!isNew && !editMode && tab === 'waitlist' && (
             <div>
               {waitlistClients.length === 0 ? (
@@ -381,7 +534,6 @@ function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addCl
                   ))}
                 </>
               )}
-              {/* Add to waitlist */}
               <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1.5px solid #E0D5C1' }}>
                 <label style={labelStyle}>Add client to waitlist</label>
                 <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
@@ -418,27 +570,26 @@ function ClassModal({ cls, weekStart, onClose, clients, trainers, classes, addCl
               This will cancel {confirmedBookings.length} booking(s) and remove {waitlistBookings.length} waitlist entries. No sessions will be deducted.
             </div>
             <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setShowCancelConfirm(false)} style={{ flex: 1, padding: '10px', background: '#F5F0E8', border: '1.5px solid #E0D5C1', borderRadius: 8, cursor: 'pointer' }}>Go Back</button>
-              <button onClick={handleCancelClass} disabled={cancelling} style={{ flex: 1, padding: '10px', background: '#8C3A3A', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 500, opacity: cancelling ? 0.6 : 1 }}>{cancelling ? 'Cancelling…' : 'Yes, Cancel'}</button>
+              <button onClick={() => setShowCancelConfirm(false)} style={{ flex: 1, ...btnSecondary }}>Go Back</button>
+              <button onClick={handleCancelClass} disabled={cancelling} style={{ flex: 1, ...btnDanger, opacity: cancelling ? 0.6 : 1 }}>{cancelling ? 'Cancelling…' : 'Yes, Cancel'}</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Delete Confirmation */}
-      {showDeleteConfirm && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(42,26,14,0.7)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: '#FAF7F2', borderRadius: 18, maxWidth: 380, width: '100%', padding: 24, border: '1px solid #E0D5C1' }}>
-            <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.3rem', fontWeight: 500, color: '#3D2314', marginBottom: 12 }}>Delete Class?</div>
-            <div style={{ fontSize: '0.88rem', color: '#6B5744', marginBottom: 20 }}>
-              This permanently deletes the class. This action cannot be undone.
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setShowDeleteConfirm(false)} style={{ flex: 1, padding: '10px', background: '#F5F0E8', border: '1.5px solid #E0D5C1', borderRadius: 8, cursor: 'pointer' }}>Go Back</button>
-              <button onClick={handleDeleteClass} disabled={cancelling} style={{ flex: 1, padding: '10px', background: '#8C3A3A', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 500, opacity: cancelling ? 0.6 : 1 }}>{cancelling ? 'Deleting…' : 'Yes, Delete'}</button>
-            </div>
-          </div>
-        </div>
+      {/* Smart Delete Modal */}
+      {showDeleteModal && (
+        <SmartDeleteModal
+          cls={cls}
+          onClose={() => setShowDeleteModal(false)}
+          onDeleted={() => { if (onClassCancelled) onClassCancelled(); }}
+          removeClass={removeClass}
+          cancelOccurrence={cancelOccurrence}
+          endRecurringFrom={endRecurringFrom}
+          deleteRecurringRule={deleteRecurringRule}
+          deleteByTrainer={deleteByTrainer}
+          deleteByDayAndTime={deleteByDayAndTime}
+        />
       )}
     </div>
   );
@@ -452,23 +603,30 @@ export default function AdminSchedule() {
   const [showNewModal,  setShowNewModal]  = useState(false);
   const [refreshKey,    setRefreshKey]    = useState(0);
 
-  const { classes, loading, addClass, addRecurringClasses, updateClass, removeClass } = useClasses();
+  const {
+    classes, loading,
+    addClass, addRecurringClass,
+    updateClass,
+    removeClass,
+    cancelOccurrence, endRecurringFrom, deleteRecurringRule,
+    deleteByTrainer, deleteByDayAndTime,
+  } = useClasses();
+
   const { clients }   = useClients();
   const { trainers }  = useTrainers();
   const { addBooking, addToWaitlist, approveWaitlist, rejectWaitlist } = useBookings();
 
   const weekStart    = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weekOffset * 7);
   const trainerNames = ['All', ...trainers.map(t => t.name)];
-  const filtered     = classes.filter(c => trainerFilter === 'All' || c.trainer === trainerFilter);
 
-  // Get all unique times in the current filtered set + always show a reasonable set
+  // Expand recurring rules into per-week virtual occurrences for this week.
+  const resolvedClasses = resolveClassesForWeek(classes, weekStart);
+  const filtered        = resolvedClasses.filter(c => trainerFilter === 'All' || c.trainer === trainerFilter);
+
   const timesInUse = [...new Set(filtered.map(c => c.time))].sort();
-  // Display time slots: union of classes in use + full slot list limited to 5AM-11PM
   const displaySlots = ALL_TIME_SLOTS;
 
   function getClass(day, time) {
-    // BUG FIX: Also match by the actual date for this week's column so that recurring
-    // classes on the same day-of-week in different weeks don't ALL appear in the same cell.
     const dateForCell = format(addDays(weekStart, day), 'yyyy-MM-dd');
     return filtered.find(c =>
       c.day === day &&
@@ -478,19 +636,26 @@ export default function AdminSchedule() {
     ) || null;
   }
 
-  // Only show rows that have at least one class OR are in a reasonable AM/PM range
-  const activeSlots = displaySlots.filter(time => {
-    return DAYS_OF_WEEK.some((_, di) => getClass(di, time));
-  });
-  // Show all slots from 6AM to 10PM for browsing, plus any classes outside that
+  const activeSlots = displaySlots.filter(time => DAYS_OF_WEEK.some((_, di) => getClass(di, time)));
   const browseSlots = displaySlots.filter(t => {
     const h = parseInt(t.split(':')[0]);
     return h >= 9 && h <= 21;
   });
-  // Final: union of browseSlots + activeSlots
   const finalSlots = [...new Set([...browseSlots, ...timesInUse])].sort();
 
   const handleClassCancelled = () => setRefreshKey(prev => prev + 1);
+
+  // Common props passed to both modals
+  const modalProps = {
+    weekStart,
+    clients, trainers, classes: resolvedClasses,
+    addClass, addRecurringClass,
+    updateClass, removeClass,
+    cancelOccurrence, endRecurringFrom, deleteRecurringRule,
+    deleteByTrainer, deleteByDayAndTime,
+    addBooking, addToWaitlist, approveWaitlist, rejectWaitlist,
+    onClassCancelled: handleClassCancelled,
+  };
 
   return (
     <div key={refreshKey} style={{ padding: '28px 32px 40px' }}>
@@ -547,7 +712,10 @@ export default function AdminSchedule() {
                   <div key={di} style={{ padding: '5px 4px', minHeight: 58 }}>
                     {cls ? (
                       <div onClick={() => setSelectedClass(cls)} style={{ borderRadius: 8, padding: '7px 9px', cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3, border: `1.5px solid ${cls.status === 'full' ? '#DDB89E' : '#C8D9B0'}`, background: cls.status === 'full' ? '#F5EDE8' : '#EEF3E6' }}>
-                        <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#3D2314' }}>{cls.name}</div>
+                        <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#3D2314', display: 'flex', alignItems: 'center', gap: 4 }}>
+                          {cls.name}
+                          {cls.isRecurring && <RefreshCw size={8} style={{ color: '#9C8470', flexShrink: 0 }} />}
+                        </div>
                         <div style={{ fontSize: '0.66rem', color: '#9C8470' }}>{cls.trainer}</div>
                         <div style={{ fontSize: '0.63rem', fontWeight: 600, textTransform: 'uppercase', color: cls.status === 'full' ? '#8C4A2A' : '#4E6A2E' }}>{cls.status === 'full' ? 'Full' : 'Available'}</div>
                       </div>
@@ -565,14 +733,17 @@ export default function AdminSchedule() {
         {filtered.filter(c => c.status !== 'cancelled').sort((a, b) => a.day - b.day || a.time.localeCompare(b.time)).map(cls => {
           const date = addDays(weekStart, cls.day);
           return (
-            <div key={cls.id} onClick={() => setSelectedClass(cls)} style={{ background: '#FAF7F2', borderRadius: 12, border: '1px solid #E0D5C1', padding: '14px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
+            <div key={cls.id + (cls._occurrenceDate || '')} onClick={() => setSelectedClass(cls)} style={{ background: '#FAF7F2', borderRadius: 12, border: '1px solid #E0D5C1', padding: '14px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
               <div style={{ textAlign: 'center', minWidth: 42 }}>
                 <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: '#9C8470' }}>{format(date, 'EEE')}</div>
                 <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.5rem', fontWeight: 500, color: '#3D2314', lineHeight: 1 }}>{format(date, 'd')}</div>
               </div>
               <div style={{ width: 1.5, height: 36, background: '#E0D5C1' }} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 500, fontSize: '0.92rem', color: '#2A1A0E' }}>{cls.name}</div>
+                <div style={{ fontWeight: 500, fontSize: '0.92rem', color: '#2A1A0E', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  {cls.name}
+                  {cls.isRecurring && <RefreshCw size={10} style={{ color: '#9C8470' }} />}
+                </div>
                 <div style={{ fontSize: '0.78rem', color: '#9C8470', marginTop: 2 }}>{fmt12(cls.time)} · {cls.trainer}</div>
               </div>
               <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 500, background: cls.status === 'full' ? '#F5EDE8' : '#EEF3E6', color: cls.status === 'full' ? '#8C4A2A' : '#4E6A2E' }}>{cls.status === 'full' ? 'Full' : 'Available'}</span>
@@ -583,40 +754,13 @@ export default function AdminSchedule() {
 
       {/* Modals */}
       {selectedClass && (
-        <ClassModal
-          cls={selectedClass}
-          weekStart={weekStart}
-          onClose={() => setSelectedClass(null)}
-          clients={clients}
-          trainers={trainers}
-          classes={classes}
-          addClass={addClass}
-          addRecurringClasses={addRecurringClasses}
-          updateClass={updateClass}
-          removeClass={removeClass}
-          addBooking={addBooking}
-          addToWaitlist={addToWaitlist}
-          approveWaitlist={approveWaitlist}
-          rejectWaitlist={rejectWaitlist}
-          onClassCancelled={handleClassCancelled}
-        />
+        <ClassModal cls={selectedClass} onClose={() => setSelectedClass(null)} {...modalProps} />
       )}
       {showNewModal && (
         <ClassModal
           cls={{ id: 'new', day: 0, time: '08:00', name: '', trainer: '', capacity: 8, booked: 0, status: 'available', startDate: '' }}
-          weekStart={weekStart}
           onClose={() => setShowNewModal(false)}
-          clients={clients}
-          trainers={trainers}
-          classes={classes}
-          addClass={addClass}
-          addRecurringClasses={addRecurringClasses}
-          updateClass={updateClass}
-          removeClass={removeClass}
-          addBooking={addBooking}
-          addToWaitlist={addToWaitlist}
-          approveWaitlist={approveWaitlist}
-          rejectWaitlist={rejectWaitlist}
+          {...modalProps}
         />
       )}
 

@@ -131,7 +131,7 @@ function CancelConfirmDialog({ booking, cls, onConfirm, onCancel, cancelling }) 
           Are you sure you want to cancel your booking for <strong>{cls?.name}</strong>?
         </div>
         <div style={{ background:'#EEF3E6', border:'1px solid #C8D9B0', borderRadius:8, padding:'9px 13px', fontSize:'0.8rem', color:'#4E6A2E', marginBottom:20 }}>
-          ℹ️ Note: Cancellations are not allowed within 24 hours of the class start time.
+          ℹ️ Note: Cancellations are not allowed within 12 hours of the class start time.
         </div>
         <div style={{ display:'flex', gap:10 }}>
           <button onClick={onCancel} style={{ flex:1, padding:'11px', background:'#F5F0E8', border:'1.5px solid #E0D5C1', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.88rem', color:'#6B5744' }}>Keep Booking</button>
@@ -250,6 +250,18 @@ export default function ClientDashboard() {
     if (!cancelTarget) return;
     const cls = getClass(cancelTarget.classId);
     if (!cls) { toast.error('Class not found.'); return; }
+
+    // Enforce 12-hour cancellation window client-side
+    if (cls.date && cls.time) {
+      const classDateTime = new Date(`${cls.date}T${cls.time}:00`);
+      const cutoffMs = classDateTime.getTime() - 12 * 60 * 60 * 1000;
+      if (Date.now() >= cutoffMs) {
+        toast.error('Cannot cancel within 12 hours of the class. Please contact the studio.');
+        setCancelTarget(null);
+        return;
+      }
+    }
+
     setCancelling(true);
     try {
       await clientCancelBooking(cancelTarget.id, cancelTarget.classId, cls.date, cls.time, cls);
@@ -257,7 +269,7 @@ export default function ClientDashboard() {
       setCancelTarget(null);
     } catch (err) {
       if (err.message === 'WITHIN_24H') {
-        toast.error('Cannot cancel within 24 hours of the class. Please contact the studio.');
+        toast.error('Cannot cancel within 12 hours of the class. Please contact the studio.');
       } else {
         toast.error('Failed to cancel. Please try again.');
       }

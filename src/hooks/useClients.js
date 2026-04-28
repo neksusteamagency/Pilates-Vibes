@@ -12,7 +12,7 @@ export function useClients() {
   const [error,   setError]   = useState(null);
 
   useEffect(() => {
-    const q = query(collection(db, 'clients'), orderBy('name'));
+    const q = query(collection(db, 'clients'), orderBy('createdAt', 'desc')); // ← newest first
     const unsub = onSnapshot(q, (snap) => {
       setClients(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
@@ -97,8 +97,6 @@ export function useClients() {
     });
   }
 
-  // BUG FIX: When client self-registers with same phone as admin-created record,
-  // merge them: update admin record with new auth uid and any new profile info (name, email).
   async function mergeClientByPhone(phone, authUid, profileData) {
     const normalizedPhone = (phone || '').replace(/\s+/g, '').replace(/[^\d+]/g, '');
     const q = query(
@@ -108,12 +106,10 @@ export function useClients() {
     const snap = await getDocs(q);
     if (snap.empty) return null;
 
-    // Find the existing client doc (not the one with the same auth uid)
     const existingDoc = snap.docs.find(d => d.id !== authUid);
     if (!existingDoc) return null;
 
     const existingData = existingDoc.data();
-    // Update the existing doc with new auth info AND updated profile fields
     await updateDoc(doc(db, 'clients', existingDoc.id), {
       uid:       authUid,
       name:      profileData.name || existingData.name,
@@ -123,7 +119,7 @@ export function useClients() {
       updatedAt: serverTimestamp(),
     });
 
-    return existingDoc.id; // return the canonical doc id
+    return existingDoc.id;
   }
 
   async function deductSession(id, currentRemaining) {
@@ -138,7 +134,6 @@ export function useClients() {
     });
   }
 
-  // Feature: admin can manually set expiry date for a client's package
   async function updatePackageExpiry(id, newExpiry) {
     await updateDoc(doc(db, 'clients', id), {
       expiry:    newExpiry,
