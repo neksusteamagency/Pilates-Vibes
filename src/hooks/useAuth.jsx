@@ -8,7 +8,7 @@ import {
 } from 'firebase/auth';
 import {
   doc, getDoc, setDoc, updateDoc,
-  serverTimestamp, collection, query, where, getDocs, writeBatch, deleteDoc
+  serverTimestamp, collection, query, where, getDocs
 } from 'firebase/firestore';
 
 const AuthContext = createContext(null);
@@ -65,82 +65,50 @@ export function AuthProvider({ children }) {
   async function register(email, password, name, phone, dob) {
     const normalizedPhone = phone.replace(/\s+/g, '').replace(/[^\d+]/g, '');
 
-    // Check if a client doc already exists with this phone number
+    // 1. Check for an existing client doc with this phone BEFORE creating the Auth account.
+    //    We do this first so we can block duplicate registrations cleanly.
     const phoneQuery = await getDocs(
       query(collection(db, 'clients'), where('phone', '==', normalizedPhone))
     );
 
+    // If a doc with this phone already has a uid linked, someone already registered — block it.
+    if (!phoneQuery.empty) {
+      const existingData = phoneQuery.docs[0].data();
+      if (existingData.uid && existingData.uid !== '') {
+        throw new Error('PHONE_ALREADY_REGISTERED');
+      }
+    }
+
+    // 2. Create the Firebase Auth account.
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const uid = cred.user.uid;
     const avatar = name.trim().split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
 
-    // Create /users/{uid} doc
+    // 3. Create /users/{uid} doc (always, for role + profile lookup).
     await setDoc(doc(db, 'users', uid), {
       name: name.trim(), phone: normalizedPhone, email, avatar, dob: dob || '',
       role: 'client', createdAt: serverTimestamp(),
     });
 
     if (!phoneQuery.empty) {
-      // ── MERGE: link existing client profile to this Auth account ──
+      // ── MERGE: stamp uid onto the existing client doc. The doc ID stays the same.
+      // Everything else (package, sessions, bookings, attendance) is already attached
+      // to this doc ID and keeps working with zero migrations needed.
       const existingClientDoc = phoneQuery.docs[0];
-      // BUG FIX: also update name and dob so the admin page reflects the
-      // client's real registered name instead of the admin's placeholder.
       await updateDoc(doc(db, 'clients', existingClientDoc.id), {
         uid,
-        name: name.trim(),
         email,
         avatar,
+        name: name.trim(),
         dob: dob || existingClientDoc.data().dob || '',
         linkedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-      
-      // If existing client doc id differs from uid, create a new one with uid pointing to same data
-      if (existingClientDoc.id !== uid) {
-        const existingData = existingClientDoc.data();
-
-        // 1. Create the new doc under the uid (copy all existing data)
-        await setDoc(doc(db, 'clients', uid), {
-          ...existingData,
-          uid,
-          name: name.trim(),
-          email,
-          avatar,
-          dob: dob || existingData.dob || '',
-          linkedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-
-        // 2. Migrate all bookings from old ID → new uid
-        const oldBookings = await getDocs(
-          query(collection(db, 'bookings'), where('clientId', '==', existingClientDoc.id))
-        );
-        if (!oldBookings.empty) {
-          const batch = writeBatch(db);
-          oldBookings.docs.forEach(d => {
-            batch.update(doc(db, 'bookings', d.id), { clientId: uid });
-          });
-          await batch.commit();
-        }
-
-        // 3. Migrate all attendance records too
-        const oldAttendance = await getDocs(
-          query(collection(db, 'attendance'), where('clientId', '==', existingClientDoc.id))
-        );
-        if (!oldAttendance.empty) {
-          const batch = writeBatch(db);
-          oldAttendance.docs.forEach(d => {
-            batch.update(doc(db, 'attendance', d.id), { clientId: uid });
-          });
-          await batch.commit();
-        }
-
-        // 4. Delete the old doc so there's no duplicate
-        await deleteDoc(doc(db, 'clients', existingClientDoc.id));
-      }
     } else {
-      // ── NEW CLIENT: create fresh client profile ──
+      // ── NEW CLIENT: no existing profile found, create a fresh one.
+      // Use uid as the doc ID so the simple c.id === uid lookup works for new clients.
       await setDoc(doc(db, 'clients', uid), {
+        uid,
         name: name.trim(), phone: normalizedPhone, email, avatar,
         dob: dob || '',
         pkg: '',

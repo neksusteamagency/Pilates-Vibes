@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { useClasses } from '../../hooks/useClasses';
+import { useClasses, resolveClassesForWeek } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
 import { useClients } from '../../hooks/useClients';
 import { ChevronLeft, ChevronRight, Check, MessageSquare, X, Package } from 'lucide-react';
@@ -374,9 +374,9 @@ export default function ClientBook() {
   const { user } = useAuth();
 
   const { classes, loading: classesLoading } = useClasses();
-  const { bookings, confirmedBookings, addClientBooking, addToWaitlist } = useBookings({ clientId: user?.uid });
   const { clients } = useClients();
-  const clientDoc = clients.find(c => c.id === user?.uid);
+  const clientDoc = clients.find(c => c.id === user?.uid || c.uid === user?.uid);
+  const { bookings, confirmedBookings, addClientBooking, addToWaitlist } = useBookings({ clientId: clientDoc?.id ?? user?.uid });
 
   const [step,          setStep]          = useState(1);
   const [selected,      setSelected]      = useState(null);
@@ -391,9 +391,7 @@ export default function ClientBook() {
   const weekDates = Array.from({ length: 7 }, (_, i) =>
     format(addDays(weekStart, i), 'yyyy-MM-dd')
   );
-  const weekClasses = classes.filter(c =>
-    weekDates.includes(c.date) && c.status !== 'cancelled'
-  );
+  const weekClasses = resolveClassesForWeek(classes, weekStart);
 
   function alreadyBooked(classId) {
     return bookings.some(b => b.classId === classId && b.weekOf === weekOf && b.status === 'confirmed');

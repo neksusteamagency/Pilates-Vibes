@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Users, Calendar, DollarSign, Star, AlertTriangle, Clock, ChevronRight, Check, X } from 'lucide-react';
 import { useClients } from '../../hooks/useClients';
-import { useClasses } from '../../hooks/useClasses';
+import { useClasses, resolveClassesForWeek } from '../../hooks/useClasses';
 import { useAttendance } from '../../hooks/useAttendance';
 import { useBookings } from '../../hooks/useBookings';
 import { format, addDays, startOfWeek } from 'date-fns';
@@ -77,13 +77,10 @@ export default function AdminOverview() {
 
   // ── Derived stats ────────────────────────────────────────
   const activeMembers  = clients.filter(c => c.status === 'active' && !c.isFrozen).length;
-const weekStart      = startOfWeek(new Date(), { weekStartsOn: 1 });
-const todayClasses   = classes.filter(c => {
-  if (c.day !== todayDay) return false;
-  const expectedDate = format(addDays(weekStart, c.day), 'yyyy-MM-dd');
-  if (c.date && c.date !== expectedDate) return false;
-  return true;
-});
+  const weekStart      = startOfWeek(new Date(), { weekStartsOn: 1 });
+  const todayDateStr   = format(addDays(weekStart, todayDay), 'yyyy-MM-dd');
+  const resolvedClasses = resolveClassesForWeek(classes, weekStart);
+  const todayClasses   = resolvedClasses.filter(c => c.date === todayDateStr);
 const sessionsToday  = todayClasses.length;
 const now            = new Date();
 const currentHour    = now.getHours() + now.getMinutes() / 60;
@@ -112,7 +109,7 @@ const remainingToday = todayClasses.filter(c => {
   // ── Today's attendance records ───────────────────────────
   // Build a flat list: for each today class × each booked client
   const todayAttendanceRows = attendance.map(a => {
-    const cls    = classes.find(c => c.id === a.classId);
+    const cls    = resolvedClasses.find(c => c.id === a.classId);
     const client = clients.find(c => c.id === a.clientId);
     return {
       id:       a.id,
@@ -140,7 +137,7 @@ const remainingToday = todayClasses.filter(c => {
 
   // ── Waitlist (first 3) ───────────────────────────────────
   const waitlistRows = waitlist.slice(0, 3).map(w => {
-    const cls    = classes.find(c => c.id === w.classId);
+    const cls    = resolvedClasses.find(c => c.id === w.classId);
     const client = clients.find(c => c.id === w.clientId);
     // Time remaining for notified person
     let timer = null;

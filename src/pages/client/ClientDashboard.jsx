@@ -218,9 +218,9 @@ export default function ClientDashboard() {
   const navigate    = useNavigate();
 
   const { clients, loading: clientsLoading } = useClients();
-  const clientDoc = clients.find(c => c.id === user?.uid);
+  const clientDoc = clients.find(c => c.id === user?.uid || c.uid === user?.uid);
 
-  const { bookings, confirmedBookings, loading: bookingsLoading, clientCancelBooking } = useBookings({ clientId: user?.uid });
+  const { bookings, confirmedBookings, loading: bookingsLoading, clientCancelBooking } = useBookings({ clientId: clientDoc?.id ?? user?.uid });
   const { classes, loading: classesLoading } = useClasses();
 
   const [cancelTarget,  setCancelTarget]  = useState(null);

@@ -242,6 +242,36 @@ function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurren
   );
 }
 
+// Small self-contained component so the waitlist tab can have its own selectedClient state
+// without polluting ClassModal's state (which now uses a Set for multi-select bookings).
+function WaitlistAdder({ availableClients, onAdd, saving, setSaving }) {
+  const [selected, setSelected] = useState('');
+  return (
+    <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+      <select value={selected} onChange={e => setSelected(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+        <option value="">Choose a client…</option>
+        {availableClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      <button
+        onClick={async () => {
+          if (!selected) return;
+          setSaving(true);
+          try {
+            await onAdd(selected);
+            toast.success('Added to waitlist.');
+            setSelected('');
+          } catch { toast.error('Failed.'); }
+          finally { setSaving(false); }
+        }}
+        disabled={!selected || saving}
+        style={{ ...btnPrimary, width: 'auto', padding: '10px 16px', opacity: selected && !saving ? 1 : 0.5 }}
+      >
+        {saving ? '…' : 'Add'}
+      </button>
+    </div>
+  );
+}
+
 // ── Class Modal ──────────────────────────────────────────────
 function ClassModal({
   cls, weekStart, onClose,
@@ -254,7 +284,7 @@ function ClassModal({
   onClassCancelled,
 }) {
   const [tab,               setTab]               = useState('details');
-  const [selectedClient,    setSelectedClient]    = useState('');
+  const [selectedClients,   setSelectedClients]   = useState(new Set());
   const [saving,            setSaving]            = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [showDeleteModal,   setShowDeleteModal]   = useState(false);
@@ -282,23 +312,39 @@ function ClassModal({
   const availableClients = clients.filter(c => !bookedIds.includes(c.id) && !waitlistIds.includes(c.id));
 
   async function handleAddBooking() {
-    if (!selectedClient) return;
+    if (selectedClients.size === 0) return;
     setSaving(true);
     try {
-      const weekOf     = format(weekStart, 'yyyy-MM-dd');
-      const classData  = classes.find(c => c.id === cls.id) || cls;
-      const clientData = clients.find(c => c.id === selectedClient);
-      if (cls.booked >= cls.capacity) {
-        await addToWaitlist(cls.id, selectedClient, weekOf, waitlistBookings.length + 1);
-        toast.success('Added to waitlist.');
-      } else {
-        await addBooking(cls.id, selectedClient, weekOf, classData, clientData);
-        toast.success('Booking confirmed!');
+      const weekOf    = format(weekStart, 'yyyy-MM-dd');
+      const classData = classes.find(c => c.id === cls.id) || cls;
+      let spotsLeft   = cls.capacity - (cls.booked || 0);
+      let bookedCount = 0;
+      let waitlisted  = 0;
+
+      for (const clientId of selectedClients) {
+        const clientData = clients.find(c => c.id === clientId);
+        if (spotsLeft > 0) {
+          await addBooking(cls.id, clientId, weekOf, classData, clientData);
+          spotsLeft--;
+          bookedCount++;
+        } else {
+          await addToWaitlist(cls.id, clientId, weekOf, waitlistBookings.length + waitlisted + 1);
+          waitlisted++;
+        }
       }
-      setSelectedClient('');
-      onClose();
-    } catch { toast.error('Failed to book. Try again.'); }
-    finally   { setSaving(false); }
+
+      if (waitlisted > 0) {
+        toast.success(`${bookedCount} booked, ${waitlisted} added to waitlist.`);
+      } else {
+        toast.success(`${bookedCount} client${bookedCount > 1 ? 's' : ''} booked!`);
+      }
+      setSelectedClients(new Set());
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to add some bookings. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleSaveEdit(form) {
@@ -498,16 +544,100 @@ function ClassModal({
           {/* BOOK */}
           {!isNew && !editMode && tab === 'book' && (
             <div>
-              <p style={{ fontSize: '0.82rem', color: '#6B5744', marginBottom: 16 }}>{cls.booked >= cls.capacity ? 'Class is full — client will be added to waitlist.' : 'Select a client and add them directly to this class.'}</p>
-              <div style={{ marginBottom: 14 }}>
-                <label style={labelStyle}>Select Client</label>
-                <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)} style={inputStyle}>
-                  <option value="">Choose a client…</option>
-                  {availableClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+              <p style={{ fontSize: '0.82rem', color: '#6B5744', marginBottom: 16 }}>
+                {cls.booked >= cls.capacity
+                  ? 'Class is full — selected clients will be added to waitlist.'
+                  : 'Select one or more clients to add to this class.'}
+              </p>
+
+              {/* Search */}
+              <input
+                placeholder="Search clients…"
+                onChange={e => {
+                  const val = e.target.value.toLowerCase();
+                  e.target._filter = val;
+                  e.target.dispatchEvent(new Event('_search'));
+                }}
+                onInput={e => {
+                  const val = e.target.value.toLowerCase();
+                  document.querySelectorAll('[data-client-row]').forEach(row => {
+                    row.style.display = row.dataset.clientName.toLowerCase().includes(val) ? '' : 'none';
+                  });
+                }}
+                style={{ ...inputStyle, marginBottom: 10 }}
+              />
+
+              {/* Client checklist */}
+              <div style={{ maxHeight: 260, overflowY: 'auto', border: '1.5px solid #E0D5C1', borderRadius: 8, marginBottom: 14 }}>
+                {availableClients.length === 0 ? (
+                  <div style={{ padding: '16px', textAlign: 'center', fontSize: '0.82rem', color: '#9C8470' }}>
+                    All clients are already booked.
+                  </div>
+                ) : availableClients.map((c, i) => {
+                  const isSelected = selectedClients.has(c.id);
+                  return (
+                    <div
+                      key={c.id}
+                      data-client-row
+                      data-client-name={c.name}
+                      onClick={() => {
+                        setSelectedClients(prev => {
+                          const next = new Set(prev);
+                          next.has(c.id) ? next.delete(c.id) : next.add(c.id);
+                          return next;
+                        });
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 12,
+                        padding: '10px 14px',
+                        borderBottom: i < availableClients.length - 1 ? '1px solid #E0D5C1' : 'none',
+                        background: isSelected ? '#F0F5E8' : 'transparent',
+                        cursor: 'pointer', transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#F5F0E8'; }}
+                      onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      {/* Checkbox */}
+                      <div style={{
+                        width: 18, height: 18, borderRadius: 4, flexShrink: 0,
+                        border: `2px solid ${isSelected ? '#4E6A2E' : '#C4AE8F'}`,
+                        background: isSelected ? '#4E6A2E' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        transition: 'all 0.15s',
+                      }}>
+                        {isSelected && <Check size={11} color='#fff' />}
+                      </div>
+                      {/* Avatar */}
+                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#C4AE8F', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 600, color: '#3D2314', flexShrink: 0 }}>
+                        {c.avatar}
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: '0.88rem', fontWeight: 500, color: '#2A1A0E' }}>{c.name}</div>
+                        <div style={{ fontSize: '0.72rem', color: '#9C8470', marginTop: 1 }}>
+                          {c.pkg || 'No package'}{c.sessionsRemaining != null ? ` · ${c.sessionsRemaining} sessions left` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <button style={{ ...btnPrimary, opacity: selectedClient && !saving ? 1 : 0.5 }} disabled={!selectedClient || saving} onClick={handleAddBooking}>
-                {saving ? 'Booking…' : cls.booked >= cls.capacity ? 'Add to Waitlist' : 'Confirm Booking'}
+
+              {/* Selection summary + confirm */}
+              {selectedClients.size > 0 && (
+                <div style={{ background: '#EEF3E6', border: '1px solid #C8D9B0', borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem', color: '#4E6A2E', marginBottom: 12 }}>
+                  {selectedClients.size} client{selectedClients.size > 1 ? 's' : ''} selected
+                  {cls.booked + selectedClients.size > cls.capacity
+                    ? ` — ${Math.max(0, cls.capacity - cls.booked)} will be booked, ${cls.booked + selectedClients.size - cls.capacity} to waitlist`
+                    : ''}
+                </div>
+              )}
+
+              <button
+                style={{ ...btnPrimary, opacity: selectedClients.size > 0 && !saving ? 1 : 0.5 }}
+                disabled={selectedClients.size === 0 || saving}
+                onClick={handleAddBooking}
+              >
+                {saving ? 'Booking…' : selectedClients.size === 0 ? 'Select clients above' : cls.booked >= cls.capacity ? `Add ${selectedClients.size} to Waitlist` : `Confirm ${selectedClients.size} Booking${selectedClients.size > 1 ? 's' : ''}`}
               </button>
             </div>
           )}
@@ -536,25 +666,15 @@ function ClassModal({
               )}
               <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1.5px solid #E0D5C1' }}>
                 <label style={labelStyle}>Add client to waitlist</label>
-                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                  <select value={selectedClient} onChange={e => setSelectedClient(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
-                    <option value="">Choose a client…</option>
-                    {availableClients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                  <button onClick={async () => {
-                    if (!selectedClient) return;
-                    setSaving(true);
-                    try {
-                      const weekOf = format(weekStart, 'yyyy-MM-dd');
-                      await addToWaitlist(cls.id, selectedClient, weekOf, waitlistBookings.length + 1);
-                      toast.success('Added to waitlist.');
-                      setSelectedClient('');
-                    } catch { toast.error('Failed.'); }
-                    finally   { setSaving(false); }
-                  }} disabled={!selectedClient || saving} style={{ ...btnPrimary, width: 'auto', padding: '10px 16px', opacity: selectedClient && !saving ? 1 : 0.5 }}>
-                    {saving ? '…' : 'Add'}
-                  </button>
-                </div>
+                <WaitlistAdder
+                  availableClients={availableClients}
+                  onAdd={async (clientId) => {
+                    const weekOf = format(weekStart, 'yyyy-MM-dd');
+                    await addToWaitlist(cls.id, clientId, weekOf, waitlistBookings.length + 1);
+                  }}
+                  saving={saving}
+                  setSaving={setSaving}
+                />
               </div>
             </div>
           )}

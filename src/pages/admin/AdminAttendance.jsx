@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { format, addDays, startOfWeek } from 'date-fns';
 import { Check, X, Clock, ChevronLeft, ChevronRight, AlertTriangle, Search, User, MinusCircle } from 'lucide-react';
-import { useClasses } from '../../hooks/useClasses';
+import { useClasses, resolveClassesForWeek } from '../../hooks/useClasses';
 import { useClients } from '../../hooks/useClients';
 import { useAttendance } from '../../hooks/useAttendance';
 import { useBookings } from '../../hooks/useBookings';
@@ -236,12 +236,12 @@ export default function AdminAttendance() {
     dateTo:   weekEndStr,
   });
 
-const todayClasses = classes.filter(c => {
-  if (c.day !== todayIndex) return false;
-  const expectedDate = format(addDays(weekStart, c.day), 'yyyy-MM-dd');
-  if (c.date && c.date !== expectedDate) return false;
-  return true;
-});
+  const resolvedClasses = resolveClassesForWeek(classes, weekStart);
+
+  const todayClasses = resolvedClasses.filter(c => {
+    const expectedDate = format(addDays(weekStart, todayIndex), 'yyyy-MM-dd');
+    return c.date === expectedDate;
+  });
   const totalToday     = todayClasses.reduce((s, c) => s + (c.booked || 0), 0);
   const attendedToday  = attendance.filter(a => a.date === todayStr && a.status === 'attended').length;
   const noShowToday    = attendance.filter(a => a.date === todayStr && a.status === 'no-show').length;
@@ -255,12 +255,7 @@ const todayClasses = classes.filter(c => {
     setSavedClasses(prev => new Set([...prev, classId]));
   }
 
-  const filteredClasses = classes.filter(c => {
-    // Only show the class instance whose date matches this week's date for that day.
-    // This prevents all 8 recurring instances from showing up at once.
-    const expectedDate = format(addDays(weekStart, c.day), 'yyyy-MM-dd');
-    if (c.date && c.date !== expectedDate) return false;
-
+  const filteredClasses = resolvedClasses.filter(c => {
     const matchDay    = dayFilter === 'All' || DAYS_LABEL[c.day] === dayFilter;
     const matchSearch = c.name.toLowerCase().includes(search.toLowerCase()) || c.trainer.toLowerCase().includes(search.toLowerCase());
     return matchDay && matchSearch;
@@ -269,7 +264,7 @@ const todayClasses = classes.filter(c => {
   const noShowEntries = attendance
     .filter(a => a.status === 'no-show')
     .map(a => {
-      const cls    = classes.find(c => c.id === a.classId);
+      const cls    = resolvedClasses.find(c => c.id === a.classId);
       const client = clients.find(c => c.id === a.clientId);
       return client && cls ? { client, cls } : null;
     })

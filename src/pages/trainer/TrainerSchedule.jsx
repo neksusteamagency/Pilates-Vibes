@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { useClasses } from '../../hooks/useClasses';
+import { useClasses, resolveClassesForWeek } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
 import { useClients } from '../../hooks/useClients';
 import { useAttendance } from '../../hooks/useAttendance';
@@ -24,12 +24,8 @@ export default function TrainerSchedule() {
   // to only those belonging to this trainer AND falling within this week.
   // Previously, all recurring instances (e.g. 8 weeks) were shown at once because
   // there was no date check — only a trainer match.
-  const weekDates = Array.from({ length: 7 }, (_, i) =>
-    format(addDays(weekStart, i), 'yyyy-MM-dd')
-  );
-  const myClasses = classes.filter(c =>
-    (c.trainerId === user?.uid || c.trainer === user?.name) &&
-    weekDates.includes(c.date)
+  const myClasses = resolveClassesForWeek(classes, weekStart).filter(c =>
+    c.trainerId === user?.uid || c.trainer === user?.name
   );
 
   // Fetch all bookings for this week

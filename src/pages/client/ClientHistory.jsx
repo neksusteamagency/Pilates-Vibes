@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useBookings } from '../../hooks/useBookings';
 import { useClasses } from '../../hooks/useClasses';
+import { useClients } from '../../hooks/useClients';
 import { Search } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -39,8 +40,12 @@ export default function ClientHistory() {
   const [cancelTarget, setCancelTarget] = useState(null);
   const [cancelling,   setCancelling]   = useState(false);
 
-  // Fetch all bookings for this client
-  const { bookings, loading, clientCancelBooking } = useBookings({ clientId: user?.uid });
+  // Resolve the real client doc first (merged clients have a different doc ID than their uid)
+  const { clients } = useClients();
+  const clientDoc = clients.find(c => c.id === user?.uid || c.uid === user?.uid);
+
+  // Fetch all bookings using the real doc ID, not just the auth uid
+  const { bookings, loading, clientCancelBooking } = useBookings({ clientId: clientDoc?.id ?? user?.uid });
   const { classes } = useClasses();
 
   // FIXED: Show past/completed bookings INCLUDING 'confirmed'
