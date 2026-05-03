@@ -440,6 +440,13 @@ export default function ClientBook() {
   async function confirm() {
     if (!user?.uid || !selected) return;
 
+    // Always use the Firestore client doc ID — not user.uid.
+    // When the admin creates a client manually, the doc ID is a random Firestore ID,
+    // and user.uid is only stored as a field inside it after phone-linking.
+    // Using user.uid here would save the booking under the wrong clientId.
+    const clientId = clientDoc?.id;
+    if (!clientId) { toast.error('Client profile not found. Please contact the studio.'); return; }
+
     setConfirming(true);
     try {
       if (selected.status === 'full') {
@@ -447,10 +454,10 @@ export default function ClientBook() {
           b.classId === selected.id && b.weekOf === weekOf && b.status === 'waitlist'
         ).length;
         if (waitlistCount >= 3) { toast.error('Waitlist is full for this class.'); setConfirming(false); return; }
-        await addToWaitlist(selected.id, user.uid, weekOf, waitlistCount + 1);
+        await addToWaitlist(selected.id, clientId, weekOf, waitlistCount + 1);
         toast.success('Added to waitlist!');
       } else {
-        await addClientBooking(selected.id, user.uid, weekOf, selected, clientDoc);
+        await addClientBooking(selected.id, clientId, weekOf, selected, clientDoc);
         toast.success('Booking confirmed!');
       }
       setStep(3);
@@ -475,7 +482,7 @@ export default function ClientBook() {
       <BlockedModal message={blockedMsg} onClose={() => setBlockedMsg(null)} />
       {showPkgPicker && (
         <PackagePickerModal
-          clientId={user?.uid}
+          clientId={clientDoc?.id ?? user?.uid}
           onClose={() => setShowPkgPicker(false)}
           onSelected={() => { setShowPkgPicker(false); }}
         />

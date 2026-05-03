@@ -355,7 +355,7 @@ export default function AdminAttendance() {
             const isFuture = classDateTime > new Date();
 
             return (
-              <div key={cls.id}
+              <div key={cls.id + (cls._occurrenceDate || cls.date || '')}
                 style={{ display:'flex', alignItems:'center', gap:14, padding:'14px 0', borderBottom: i < filteredClasses.length-1 ? '1px solid #E0D5C1' : 'none' }}>
                 <div style={{ textAlign:'center', minWidth:44 }}>
                   <div style={{ fontSize:'0.65rem', textTransform:'uppercase', color:'#9C8470', fontWeight:500 }}>{DAYS_LABEL[cls.day]}</div>

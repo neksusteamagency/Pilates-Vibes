@@ -264,7 +264,7 @@ export default function ClientDashboard() {
 
     setCancelling(true);
     try {
-      await clientCancelBooking(cancelTarget.id, cancelTarget.classId, cls.date, cls.time, cls);
+      await clientCancelBooking(cancelTarget.id, cancelTarget.classId, cls.date, cls.time, cls, clientDoc);
       toast.success('Booking cancelled.');
       setCancelTarget(null);
     } catch (err) {

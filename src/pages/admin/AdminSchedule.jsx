@@ -14,9 +14,8 @@ const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // Helper: convert YYYY-MM-DD to day index (0=Monday,6=Sunday)
 function getDayIndexFromDate(dateStr) {
   if (!dateStr) return 0;
-  const date = new Date(dateStr + 'T12:00:00'); // avoid UTC timezone shifts
-  const jsDay = date.getDay();                 // 0=Sun, 1=Mon ... 6=Sat
-  // Map: Mon=1 → 0, Tue=2→1, Wed=3→2, Thu=4→3, Fri=5→4, Sat=6→5, Sun=0→6
+  const date = new Date(dateStr + 'T12:00:00');
+  const jsDay = date.getDay(); // 0=Sun, 1=Mon ... 6=Sat
   return jsDay === 0 ? 6 : jsDay - 1;
 }
 
@@ -72,22 +71,22 @@ function ClassForm({ initial, trainers, onSave, onCancel, saving, isEdit }) {
       </div>
       {!isEdit && (
         <>
-<div style={{ marginBottom: 14 }}>
-  <label style={labelStyle}>Start Date {form.isRecurring ? '(first class)' : ''}</label>
-  <input
-    type="date"
-    value={form.startDate || ''}
-    onChange={e => {
-      const newDate = e.target.value;
-      set('startDate', newDate);
-      if (newDate) {
-        const newDay = getDayIndexFromDate(newDate);
-        set('day', newDay);
-      }
-    }}
-    style={inputStyle}
-  />
-</div>
+          <div style={{ marginBottom: 14 }}>
+            <label style={labelStyle}>Start Date {form.isRecurring ? '(first class)' : ''}</label>
+            <input
+              type="date"
+              value={form.startDate || ''}
+              onChange={e => {
+                const newDate = e.target.value;
+                set('startDate', newDate);
+                if (newDate) {
+                  const newDay = getDayIndexFromDate(newDate);
+                  set('day', newDay);
+                }
+              }}
+              style={inputStyle}
+            />
+          </div>
           <div style={{ marginBottom: 20 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
               <input
@@ -124,13 +123,11 @@ function ClassForm({ initial, trainers, onSave, onCancel, saving, isEdit }) {
 }
 
 // ── Smart Delete Modal ────────────────────────────────────────
-// Shows contextual delete options depending on whether the class is recurring,
-// has other classes at the same slot, or shares a trainer with other classes.
 function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurrence, endRecurringFrom, deleteRecurringRule, deleteByTrainer, deleteByDayAndTime }) {
   const [deleting, setDeleting] = useState(false);
 
-  const isRecurring     = !!cls.isRecurring;
-  const occurrenceDate  = cls._occurrenceDate || cls.date;
+  const isRecurring    = !!cls.isRecurring;
+  const occurrenceDate = cls._occurrenceDate || cls.date;
 
   async function run(fn) {
     setDeleting(true);
@@ -146,7 +143,6 @@ function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurren
     }
   }
 
-  // Option button component used below
   function Option({ label, sub, onConfirm, danger }) {
     return (
       <button
@@ -182,7 +178,6 @@ function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurren
           How would you like to delete <strong>{cls.name}</strong>?
         </div>
 
-        {/* Always available: delete just this one */}
         {isRecurring ? (
           <Option
             label="Delete only this week's class"
@@ -198,7 +193,6 @@ function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurren
           />
         )}
 
-        {/* Recurring-specific options */}
         {isRecurring && (
           <>
             <Option
@@ -216,7 +210,6 @@ function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurren
           </>
         )}
 
-        {/* Trainer-wide delete */}
         {cls.trainer && (
           <Option
             label={`Delete all classes by ${cls.trainer}`}
@@ -226,7 +219,6 @@ function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurren
           />
         )}
 
-        {/* Day + time slot delete */}
         <Option
           label={`Delete all ${DAYS_OF_WEEK[cls.day]} ${fmt12(cls.time)} classes`}
           sub="Removes every class at this day and time, regardless of trainer."
@@ -242,8 +234,7 @@ function SmartDeleteModal({ cls, onClose, onDeleted, removeClass, cancelOccurren
   );
 }
 
-// Small self-contained component so the waitlist tab can have its own selectedClient state
-// without polluting ClassModal's state (which now uses a Set for multi-select bookings).
+// Small self-contained component for adding to waitlist
 function WaitlistAdder({ availableClients, onAdd, saving, setSaving }) {
   const [selected, setSelected] = useState('');
   return (
@@ -281,6 +272,7 @@ function ClassModal({
   cancelOccurrence, endRecurringFrom, deleteRecurringRule,
   deleteByTrainer, deleteByDayAndTime,
   addBooking, addToWaitlist, approveWaitlist, rejectWaitlist,
+  cancelBooking,   // ← BUG FIX: now received as prop
   onClassCancelled,
 }) {
   const [tab,               setTab]               = useState('details');
@@ -291,7 +283,20 @@ function ClassModal({
   const [cancelling,        setCancelling]        = useState(false);
   const [editMode,          setEditMode]          = useState(false);
 
-  const { bookings } = useBookings({ classId: cls.id !== 'new' ? cls.id : undefined });
+  // BUG FIX: For recurring classes, use the specific occurrence's classId.
+  // The cls.id is the recurring rule document id — we query bookings by classId (rule id)
+  // AND weekOf (the specific occurrence date) to get only this week's bookings.
+  const classIdToQuery = cls.id !== 'new' ? (cls._recurringId || cls.id) : undefined;
+
+  // weekOf must match exactly how bookings are saved — always the Monday of the week.
+  // ClientBook saves weekOf = format(weekStart, 'yyyy-MM-dd') which is always Monday.
+  // Using cls._occurrenceDate (the actual class date e.g. Wednesday) would never match.
+  const occurrenceWeekOf = format(weekStart, 'yyyy-MM-dd');
+  const { bookings } = useBookings({
+    classId: classIdToQuery,
+    weekOf:  occurrenceWeekOf,
+  });
+
   const isNew = cls.id === 'new';
 
   const confirmedBookings = bookings.filter(b => b.status === 'confirmed');
@@ -301,7 +306,7 @@ function ClassModal({
 
   const attendeeClients  = confirmedBookings.map(b => {
     const c = clients.find(cl => cl.id === b.clientId);
-    return { bookingId: b.id, clientId: b.clientId, name: c?.name || 'Unknown', avatar: c?.avatar || '??' };
+    return { bookingId: b.id, clientId: b.clientId, classId: b.classId, name: c?.name || 'Unknown', avatar: c?.avatar || '??' };
   });
   const waitlistClients  = waitlistBookings.map(b => {
     const c = clients.find(cl => cl.id === b.clientId);
@@ -311,13 +316,18 @@ function ClassModal({
   const waitlistIds      = waitlistBookings.map(b => b.clientId);
   const availableClients = clients.filter(c => !bookedIds.includes(c.id) && !waitlistIds.includes(c.id));
 
+  // BUG FIX: use confirmedBookings.length for real count (not cls.booked which is
+  // shared across all weeks of a recurring class)
+  const actualBooked = confirmedBookings.length;
+
   async function handleAddBooking() {
     if (selectedClients.size === 0) return;
     setSaving(true);
     try {
+      // weekOf is always the Monday of the week — must match how ClientBook stores it.
       const weekOf    = format(weekStart, 'yyyy-MM-dd');
       const classData = classes.find(c => c.id === cls.id) || cls;
-      let spotsLeft   = cls.capacity - (cls.booked || 0);
+      let spotsLeft   = cls.capacity - actualBooked;
       let bookedCount = 0;
       let waitlisted  = 0;
 
@@ -396,12 +406,33 @@ function ClassModal({
     setCancelling(true);
     try {
       const batch = writeBatch(db);
+
+      // Cancel all bookings
       [...confirmedBookings, ...waitlistBookings].forEach(booking => {
         batch.update(doc(db, 'bookings', booking.id), { status: 'cancelled', updatedAt: new Date() });
       });
+
+      // Cancel the class itself
       batch.update(doc(db, 'classes', cls.id), { status: 'cancelled', cancelledAt: new Date(), updatedAt: new Date() });
+
+      // Restore sessions for all confirmed (package-paying) clients
+      for (const booking of confirmedBookings) {
+        const clientData = clients.find(c => c.id === booking.clientId);
+        if (clientData?.sessionsRemaining != null) {
+          const newRemaining = (clientData.sessionsRemaining || 0) + 1;
+          const newUsed      = Math.max(0, (clientData.sessionsUsed || 1) - 1);
+          const newStatus    = newRemaining <= 2 ? 'low' : 'active';
+          batch.update(doc(db, 'clients', booking.clientId), {
+            sessionsRemaining: newRemaining,
+            sessionsUsed:      newUsed,
+            status:            newStatus,
+            updatedAt:         new Date(),
+          });
+        }
+      }
+
       await batch.commit();
-      toast.success(`Class "${cls.name}" cancelled.`);
+      toast.success(`Class "${cls.name}" cancelled. Sessions restored to all booked clients.`);
       if (onClassCancelled) onClassCancelled();
       onClose();
     } catch { toast.error('Failed to cancel class.'); }
@@ -421,6 +452,17 @@ function ClassModal({
       await rejectWaitlist(entry.bookingId);
       toast.success(`${entry.name} removed from waitlist.`);
     } catch { toast.error('Failed to reject.'); }
+  }
+
+  // BUG FIX: Cancel a single client's booking from the attendee list
+  async function handleCancelBooking(attendee) {
+    try {
+      const classData = classes.find(c => c.id === cls.id) || cls;
+      await cancelBooking(attendee.bookingId, cls.id, attendee.clientId, classData, null);
+      toast.success(`${attendee.name}'s booking cancelled.`);
+    } catch {
+      toast.error('Failed to cancel booking.');
+    }
   }
 
   return (
@@ -502,7 +544,9 @@ function ClassModal({
                 {[
                   { icon: Clock, label: 'Time',     val: fmt12(cls.time) },
                   { icon: User,  label: 'Trainer',  val: cls.trainer || 'Not assigned' },
-                  { icon: Users, label: 'Capacity', val: `${cls.booked || 0} / ${cls.capacity || 0}` },
+                  // BUG FIX: use actualBooked (real confirmed count for this week)
+                  // instead of cls.booked (shared counter across all weeks)
+                  { icon: Users, label: 'Capacity', val: `${actualBooked} / ${cls.capacity || 0}` },
                   { icon: Users, label: 'Status',   val: cls.status || 'available' },
                 ].map(({ icon: Icon, label, val }) => (
                   <div key={label} style={{ background: '#F5F0E8', borderRadius: 8, padding: '10px 14px', border: '1px solid #E0D5C1' }}>
@@ -521,12 +565,25 @@ function ClassModal({
                   <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#C4AE8F', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 600, color: '#3D2314' }}>{a.avatar}</div>
                   <span style={{ fontSize: '0.88rem', color: '#2A1A0E', flex: 1 }}>{a.name}</span>
                   <span style={{ fontSize: '0.72rem', color: '#4E6A2E', background: '#EEF3E6', padding: '2px 8px', borderRadius: 20 }}>Confirmed</span>
+                  {/* BUG FIX: Cancel button for each booking — was completely missing */}
+                  <button
+                    onClick={() => handleCancelBooking(a)}
+                    style={{
+                      padding: '3px 9px', background: '#F7EDED', color: '#8C3A3A',
+                      border: '1.5px solid #DDB0B0', borderRadius: 6, cursor: 'pointer',
+                      fontFamily: "'DM Sans',sans-serif", fontSize: '0.72rem', fontWeight: 500,
+                      display: 'flex', alignItems: 'center', gap: 3,
+                    }}
+                  >
+                    <X size={10} /> Cancel
+                  </button>
                 </div>
               ))}
 
-              {(cls.booked <= 2 && cls.booked > 0) && (
+              {/* BUG FIX: use actualBooked instead of cls.booked for the low-attendance warning */}
+              {(actualBooked <= 2 && actualBooked > 0) && (
                 <div style={{ marginTop: 16, marginBottom: 12, padding: '10px 14px', background: '#F5F1E0', border: '1px solid #DDD0A0', borderRadius: 8, fontSize: '0.75rem', color: '#7A6020', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <AlertTriangle size={14} /> This class has only {cls.booked} participant(s). Consider cancelling.
+                  <AlertTriangle size={14} /> This class has only {actualBooked} participant(s). Consider cancelling.
                 </div>
               )}
 
@@ -545,7 +602,7 @@ function ClassModal({
           {!isNew && !editMode && tab === 'book' && (
             <div>
               <p style={{ fontSize: '0.82rem', color: '#6B5744', marginBottom: 16 }}>
-                {cls.booked >= cls.capacity
+                {actualBooked >= cls.capacity
                   ? 'Class is full — selected clients will be added to waitlist.'
                   : 'Select one or more clients to add to this class.'}
               </p>
@@ -553,11 +610,6 @@ function ClassModal({
               {/* Search */}
               <input
                 placeholder="Search clients…"
-                onChange={e => {
-                  const val = e.target.value.toLowerCase();
-                  e.target._filter = val;
-                  e.target.dispatchEvent(new Event('_search'));
-                }}
                 onInput={e => {
                   const val = e.target.value.toLowerCase();
                   document.querySelectorAll('[data-client-row]').forEach(row => {
@@ -597,7 +649,6 @@ function ClassModal({
                       onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = '#F5F0E8'; }}
                       onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
                     >
-                      {/* Checkbox */}
                       <div style={{
                         width: 18, height: 18, borderRadius: 4, flexShrink: 0,
                         border: `2px solid ${isSelected ? '#4E6A2E' : '#C4AE8F'}`,
@@ -607,7 +658,6 @@ function ClassModal({
                       }}>
                         {isSelected && <Check size={11} color='#fff' />}
                       </div>
-                      {/* Avatar */}
                       <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#C4AE8F', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.7rem', fontWeight: 600, color: '#3D2314', flexShrink: 0 }}>
                         {c.avatar}
                       </div>
@@ -622,12 +672,11 @@ function ClassModal({
                 })}
               </div>
 
-              {/* Selection summary + confirm */}
               {selectedClients.size > 0 && (
                 <div style={{ background: '#EEF3E6', border: '1px solid #C8D9B0', borderRadius: 8, padding: '8px 14px', fontSize: '0.8rem', color: '#4E6A2E', marginBottom: 12 }}>
                   {selectedClients.size} client{selectedClients.size > 1 ? 's' : ''} selected
-                  {cls.booked + selectedClients.size > cls.capacity
-                    ? ` — ${Math.max(0, cls.capacity - cls.booked)} will be booked, ${cls.booked + selectedClients.size - cls.capacity} to waitlist`
+                  {actualBooked + selectedClients.size > cls.capacity
+                    ? ` — ${Math.max(0, cls.capacity - actualBooked)} will be booked, ${actualBooked + selectedClients.size - cls.capacity} to waitlist`
                     : ''}
                 </div>
               )}
@@ -637,7 +686,7 @@ function ClassModal({
                 disabled={selectedClients.size === 0 || saving}
                 onClick={handleAddBooking}
               >
-                {saving ? 'Booking…' : selectedClients.size === 0 ? 'Select clients above' : cls.booked >= cls.capacity ? `Add ${selectedClients.size} to Waitlist` : `Confirm ${selectedClients.size} Booking${selectedClients.size > 1 ? 's' : ''}`}
+                {saving ? 'Booking…' : selectedClients.size === 0 ? 'Select clients above' : actualBooked >= cls.capacity ? `Add ${selectedClients.size} to Waitlist` : `Confirm ${selectedClients.size} Booking${selectedClients.size > 1 ? 's' : ''}`}
               </button>
             </div>
           )}
@@ -669,7 +718,8 @@ function ClassModal({
                 <WaitlistAdder
                   availableClients={availableClients}
                   onAdd={async (clientId) => {
-                    const weekOf = format(weekStart, 'yyyy-MM-dd');
+                    // BUG FIX: use occurrence date, not week Monday
+                    const weekOf = cls._occurrenceDate || cls.date || format(weekStart, 'yyyy-MM-dd');
                     await addToWaitlist(cls.id, clientId, weekOf, waitlistBookings.length + 1);
                   }}
                   saving={saving}
@@ -732,18 +782,19 @@ export default function AdminSchedule() {
     deleteByTrainer, deleteByDayAndTime,
   } = useClasses();
 
-  const { clients }   = useClients();
-  const { trainers }  = useTrainers();
-  const { addBooking, addToWaitlist, approveWaitlist, rejectWaitlist } = useBookings();
+  const { clients }  = useClients();
+  const { trainers } = useTrainers();
+
+  // BUG FIX: add cancelBooking to the destructure
+  const { addBooking, addToWaitlist, approveWaitlist, rejectWaitlist, cancelBooking } = useBookings();
 
   const weekStart    = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weekOffset * 7);
   const trainerNames = ['All', ...trainers.map(t => t.name)];
 
-  // Expand recurring rules into per-week virtual occurrences for this week.
   const resolvedClasses = resolveClassesForWeek(classes, weekStart);
   const filtered        = resolvedClasses.filter(c => trainerFilter === 'All' || c.trainer === trainerFilter);
 
-  const timesInUse = [...new Set(filtered.map(c => c.time))].sort();
+  const timesInUse   = [...new Set(filtered.map(c => c.time))].sort();
   const displaySlots = ALL_TIME_SLOTS;
 
   function getClass(day, time) {
@@ -756,7 +807,6 @@ export default function AdminSchedule() {
     ) || null;
   }
 
-  const activeSlots = displaySlots.filter(time => DAYS_OF_WEEK.some((_, di) => getClass(di, time)));
   const browseSlots = displaySlots.filter(t => {
     const h = parseInt(t.split(':')[0]);
     return h >= 9 && h <= 21;
@@ -765,7 +815,7 @@ export default function AdminSchedule() {
 
   const handleClassCancelled = () => setRefreshKey(prev => prev + 1);
 
-  // Common props passed to both modals
+  // BUG FIX: cancelBooking now passed through modalProps
   const modalProps = {
     weekStart,
     clients, trainers, classes: resolvedClasses,
@@ -774,6 +824,7 @@ export default function AdminSchedule() {
     cancelOccurrence, endRecurringFrom, deleteRecurringRule,
     deleteByTrainer, deleteByDayAndTime,
     addBooking, addToWaitlist, approveWaitlist, rejectWaitlist,
+    cancelBooking,
     onClassCancelled: handleClassCancelled,
   };
 

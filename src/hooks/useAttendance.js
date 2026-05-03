@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import {
-  collection, onSnapshot, doc, getDoc, getDocs,
+  collection, onSnapshot, doc, getDocs,
   addDoc, updateDoc, setDoc,
-  query, where, orderBy, serverTimestamp, writeBatch, runTransaction,
+  query, where, orderBy, serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { format } from 'date-fns';
 
@@ -32,33 +32,6 @@ export function useAttendance(filters = {}) {
     });
     return () => unsub();
   }, [filters.classId, filters.date, filters.clientId, filters.dateFrom, filters.dateTo]);
-
-  // ── Deduct session from client balance (inside a transaction to prevent race conditions) ──
-  // BUG FIX #5: Use runTransaction to safely read-then-write atomically.
-  async function deductClientSession(clientId) {
-    if (!clientId) return false;
-
-    return await runTransaction(db, async (transaction) => {
-      const clientRef  = doc(db, 'clients', clientId);
-      const clientSnap = await transaction.get(clientRef);
-      if (!clientSnap.exists()) return false;
-
-      const clientData       = clientSnap.data();
-      const currentRemaining = clientData.sessionsRemaining || 0;
-      if (currentRemaining <= 0) return false;
-
-      const newRemaining = currentRemaining - 1;
-      const newUsed      = (clientData.sessionsUsed || 0) + 1;
-
-      transaction.update(clientRef, {
-        sessionsRemaining: newRemaining,
-        sessionsUsed:      newUsed,
-        status: newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active',
-        updatedAt: serverTimestamp(),
-      });
-      return true;
-    });
-  }
 
   // ── Update trainer stats — safe, idempotent, one count per class per date ──
   // BUG FIX #1: Use a flag on the class doc itself (counted_YYYY-MM-DD) instead of
@@ -129,40 +102,24 @@ export function useAttendance(filters = {}) {
   }
 
   // ── Log or update a single attendance record ──
-  // BUG FIX #2 & #3:
-  //   - Check `sessionDeducted` flag before deducting to prevent double-deduction on re-save.
-  //   - Accept weekOf and pass it through correctly so booking status updates work.
   async function logAttendance(classId, clientId, date, status, weekOf = null) {
     if (!clientId) return;
 
     const docId  = `${classId}_${clientId}_${date}`;
     const attRef = doc(db, 'attendance', docId);
 
-    // Read existing record to check if session was already deducted
-    const existingSnap  = await getDoc(attRef);
-    const alreadyDeducted = existingSnap.exists() && existingSnap.data().sessionDeducted === true;
-
-    const shouldDeduct = !alreadyDeducted && (status === 'attended' || status === 'no-show');
-
-    // Write attendance doc
+    // Write attendance doc — session deduction happens at booking time, not here
     await setDoc(attRef, {
       classId,
       clientId,
       date,
       status,
-      sessionDeducted: alreadyDeducted || shouldDeduct,
       updatedAt: serverTimestamp(),
     }, { merge: true });
 
-    // BUG FIX #4: weekOf must be the week-start date matching how bookings are stored.
-    // Fallback to date only if no weekOf is provided (e.g. from AdminOverview quick-toggle).
+    // weekOf must be the week-start (Monday) date matching how bookings are stored
     const bookingWeekOf = weekOf || date;
     await updateBookingStatus(classId, clientId, bookingWeekOf, status);
-
-    // Deduct session only if not already done
-    if (shouldDeduct) {
-      await deductClientSession(clientId);
-    }
   }
 
   // ── Save entire class attendance in one batch ──

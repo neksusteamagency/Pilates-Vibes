@@ -94,6 +94,19 @@ export function useBookings(filters = {}) {
       });
     }
 
+    // Deduct session from client's package — same as admin booking
+    if (hasPackage) {
+      const newRemaining = clientData.sessionsRemaining - 1;
+      const newUsed      = (clientData.sessionsUsed || 0) + 1;
+      const newStatus    = newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active';
+      batch.update(doc(db, 'clients', clientId), {
+        sessionsRemaining: newRemaining,
+        sessionsUsed:      newUsed,
+        status:            newStatus,
+        updatedAt:         serverTimestamp(),
+      });
+    }
+
     await batch.commit();
     return bookingRef.id;
   }
@@ -139,7 +152,7 @@ export function useBookings(filters = {}) {
     });
   }
 
-  // ── Cancel (admin or within 24h window) ──
+  // ── Cancel (admin cancels a client's booking) ──
   async function cancelBooking(bookingId, classId, clientId, classData, clientData) {
     const batch = writeBatch(db);
 
@@ -156,13 +169,32 @@ export function useBookings(filters = {}) {
       });
     }
 
+    // Fetch client data ourselves if the caller didn't pass it — ensures session
+    // is always restored even when called with clientData: null
+    let client = clientData;
+    if (!client && clientId) {
+      const snap = await getDoc(doc(db, 'clients', clientId));
+      if (snap.exists()) client = { id: snap.id, ...snap.data() };
+    }
+
+    if (client?.sessionsRemaining != null) {
+      const newRemaining = (client.sessionsRemaining || 0) + 1;
+      const newUsed      = Math.max(0, (client.sessionsUsed || 1) - 1);
+      const newStatus    = newRemaining <= 2 ? 'low' : 'active';
+      batch.update(doc(db, 'clients', clientId), {
+        sessionsRemaining: newRemaining,
+        sessionsUsed:      newUsed,
+        status:            newStatus,
+        updatedAt:         serverTimestamp(),
+      });
+    }
+
     await batch.commit();
   }
 
   // ── Client cancels their own booking — blocked within 24h of class ──
   // classDate: 'yyyy-MM-dd', classTime: 'HH:mm'
-  async function clientCancelBooking(bookingId, classId, classDate, classTime, classData) {
-    // Build class datetime and check 24h window
+  async function clientCancelBooking(bookingId, classId, classDate, classTime, classData, clientData) {
     const classDateTime = new Date(`${classDate}T${classTime}:00`);
     const now           = new Date();
     const msUntilClass  = classDateTime - now;
@@ -186,6 +218,19 @@ export function useBookings(filters = {}) {
         booked:    newBooked,
         status:    newBooked >= classData.capacity ? 'full' : 'available',
         updatedAt: serverTimestamp(),
+      });
+    }
+
+    // Restore the session since cancellation is within the allowed window
+    if (clientData?.sessionsRemaining != null) {
+      const newRemaining = (clientData.sessionsRemaining || 0) + 1;
+      const newUsed      = Math.max(0, (clientData.sessionsUsed || 1) - 1);
+      const newStatus    = newRemaining <= 2 ? 'low' : 'active';
+      batch.update(doc(db, 'clients', clientData.id), {
+        sessionsRemaining: newRemaining,
+        sessionsUsed:      newUsed,
+        status:            newStatus,
+        updatedAt:         serverTimestamp(),
       });
     }
 
