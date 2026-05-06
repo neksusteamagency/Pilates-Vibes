@@ -315,8 +315,7 @@ function ScheduleGrid({ weekClasses, weekStart, weekDates, alreadyBooked, onPick
                 {fmt12(time)}
               </td>
               {DAYS.map((_, di) => {
-                const cls = weekClasses.find(c => c.day === di && c.time === time);
-                if (!cls) {
+const cls = weekClasses.find(c => c.day === di && c.time === time && c.date === weekDates[di]);                if (!cls) {
                   return <td key={di} style={{ borderBottom:'1px solid #F0EAE3', padding:'6px 4px' }}></td>;
                 }
                 const booked       = alreadyBooked(cls.id);

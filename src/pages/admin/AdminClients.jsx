@@ -4,7 +4,7 @@ import { useClients } from '../../hooks/useClients';
 import { useExpenses } from '../../hooks/useExpenses';
 import { useAttendance } from '../../hooks/useAttendance';
 import { db } from '../../firebase/config';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { collection, query, where, getDocs, getDoc, doc as firestoreDoc, orderBy } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 const PACKAGES = [
@@ -248,19 +248,46 @@ function ClientModal({ client, onClose, updateClient, removeClient, freezeClient
   async function loadHistory() {
     setLoadingHistory(true);
     try {
-      const q    = query(collection(db, 'attendance'), where('clientId', '==', client.id), orderBy('date', 'desc'));
-      const snap = await getDocs(q);
-      const records = await Promise.all(snap.docs.map(async d => {
+      // Query by both the Firestore doc ID AND the uid field, because:
+      // - Admin-created clients have an auto-generated doc ID; attendance may use client.id
+      // - After the client registers, their uid is stamped on the doc; attendance may use client.uid
+      // We deduplicate by attendance doc ID to avoid showing the same record twice.
+      const ids = [...new Set([client.id, client.uid].filter(Boolean))];
+      const snapshots = await Promise.all(
+        ids.map(id =>
+          getDocs(query(collection(db, 'attendance'), where('clientId', '==', id), orderBy('date', 'desc')))
+        )
+      );
+
+      // Merge and deduplicate
+      const seen = new Set();
+      const allDocs = [];
+      for (const snap of snapshots) {
+        for (const d of snap.docs) {
+          if (!seen.has(d.id)) {
+            seen.add(d.id);
+            allDocs.push(d);
+          }
+        }
+      }
+
+      // Sort merged results by date desc
+      allDocs.sort((a, b) => (b.data().date || '').localeCompare(a.data().date || ''));
+
+      const records = await Promise.all(allDocs.map(async d => {
         const data = d.data();
-        let className = '—';
-        if (data.classId) {
-          const clsSnap = await getDocs(query(collection(db, 'classes'), where('__name__', '==', data.classId)));
-          if (!clsSnap.empty) className = clsSnap.docs[0].data().name;
+        let className = data.className || '—';
+        if (data.classId && className === '—') {
+          try {
+            const clsSnap = await getDoc(firestoreDoc(db, 'classes', data.classId));
+            if (clsSnap.exists()) className = clsSnap.data().name || data.classId;
+          } catch { /* class doc not found, keep '—' */ }
         }
         return { ...data, className };
       }));
+
       setHistory(records);
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error('loadHistory error:', err); }
     finally { setLoadingHistory(false); }
   }
 

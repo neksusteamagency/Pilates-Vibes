@@ -5,8 +5,7 @@ import {
   addDoc, updateDoc, deleteDoc,
   serverTimestamp, query, orderBy, where, getDocs,
 } from 'firebase/firestore';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns';
-
+import { format, addDays, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns';
 export function useClasses() {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -176,7 +175,7 @@ export function resolveClassesForWeek(classes, weekStart) {
   // (e.g. both a one-off doc and a recurring rule doc for the same slot)
   const seen = new Set();
   return resolved.filter(c => {
-    const key = `${c.trainer}__${c.day}__${c.time}`;
+const key = `${c.day}__${c.time}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

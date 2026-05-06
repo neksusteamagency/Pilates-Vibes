@@ -882,7 +882,7 @@ export default function AdminSchedule() {
                 return (
                   <div key={di} style={{ padding: '5px 4px', minHeight: 58 }}>
                     {cls ? (
-                      <div onClick={() => setSelectedClass(cls)} style={{ borderRadius: 8, padding: '7px 9px', cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3, border: `1.5px solid ${cls.status === 'full' ? '#DDB89E' : '#C8D9B0'}`, background: cls.status === 'full' ? '#F5EDE8' : '#EEF3E6' }}>
+                      <div onClick={() => { console.log(cls); setSelectedClass(cls); }} style={{ borderRadius: 8, padding: '7px 9px', cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3, border: `1.5px solid ${cls.status === 'full' ? '#DDB89E' : '#C8D9B0'}`, background: cls.status === 'full' ? '#F5EDE8' : '#EEF3E6' }}>
                         <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#3D2314', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {cls.name}
                           {cls.isRecurring && <RefreshCw size={8} style={{ color: '#9C8470', flexShrink: 0 }} />}
@@ -904,7 +904,7 @@ export default function AdminSchedule() {
         {filtered.filter(c => c.status !== 'cancelled').sort((a, b) => a.day - b.day || a.time.localeCompare(b.time)).map(cls => {
           const date = addDays(weekStart, cls.day);
           return (
-            <div key={cls.id + (cls._occurrenceDate || '')} onClick={() => setSelectedClass(cls)} style={{ background: '#FAF7F2', borderRadius: 12, border: '1px solid #E0D5C1', padding: '14px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
+            <div key={cls.id + (cls._occurrenceDate || '')} onClick={() => { console.log(cls); setSelectedClass(cls); }} style={{ background: '#FAF7F2', borderRadius: 12, border: '1px solid #E0D5C1', padding: '14px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
               <div style={{ textAlign: 'center', minWidth: 42 }}>
                 <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: '#9C8470' }}>{format(date, 'EEE')}</div>
                 <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.5rem', fontWeight: 500, color: '#3D2314', lineHeight: 1 }}>{format(date, 'd')}</div>

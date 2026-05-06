@@ -57,10 +57,19 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
   const dateStr = format(date, 'yyyy-MM-dd');
 
   const { bookings } = useBookings({ classId: cls.id });
-  const bookedClients = bookings
-    .filter(b => b.status === 'confirmed')
-    .map(b => clients.find(c => c.id === b.clientId))
-    .filter(Boolean);
+
+  // Match by doc ID or uid to handle pre/post-merge accounts
+  const findClient = (clientId) => clients.find(c => c.id === clientId || c.uid === clientId);
+
+  // Deduplicate: a merged client may appear twice in bookings (old doc ID + uid)
+  const bookedClients = (() => {
+    const seen = new Set();
+    return bookings
+      .filter(b => b.status === 'confirmed')
+      .map(b => findClient(b.clientId))
+      .filter(Boolean)
+      .filter(c => { if (seen.has(c.id)) return false; seen.add(c.id); return true; });
+  })();
 
   // Build initial logs from existing attendance records
   const existingLogs = {};
@@ -68,11 +77,13 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
     .filter(a => a.classId === cls.id && a.date === dateStr)
     .forEach(a => { if (a.clientId) existingLogs[a.clientId] = a.status; });
 
-  const [localLogs,     setLocalLogs]     = useState(existingLogs);
-  const [nonMemberName, setNonMemberName] = useState('');
-  const [nonMembers,    setNonMembers]    = useState([]);
-  const [search,        setSearch]        = useState('');
-  const [saving,        setSaving]        = useState(false);
+  const [localLogs,    setLocalLogs]   = useState(existingLogs);
+  const [nonMembers,   setNonMembers]  = useState([]);
+  const [search,       setSearch]      = useState('');
+  const [walkInSearch, setWalkInSearch] = useState('');
+  const [walkInMode,   setWalkInMode]  = useState('search'); // 'search' | 'new'
+  const [walkInName,   setWalkInName]  = useState('');
+  const [saving,       setSaving]      = useState(false);
 
   function cycleStatus(clientId) {
     setLocalLogs(prev => {
@@ -82,10 +93,18 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
     });
   }
 
-  function addNonMember() {
-    if (!nonMemberName.trim()) return;
-    setNonMembers(prev => [...prev, { name: nonMemberName.trim(), status: 'attended' }]);
-    setNonMemberName('');
+  // Add an existing client as a walk-in (session WILL be deducted via logs)
+  function addExistingClientWalkIn(client) {
+    if (localLogs[client.id]) return; // already in list
+    setLocalLogs(prev => ({ ...prev, [client.id]: 'attended' }));
+    setWalkInSearch('');
+  }
+
+  // Add a truly new/unregistered name — session NOT deducted, shows warning
+  function addNewNameWalkIn() {
+    if (!walkInName.trim()) return;
+    setNonMembers(prev => [...prev, { name: walkInName.trim(), status: 'attended' }]);
+    setWalkInName('');
   }
 
   const attended = Object.values(localLogs).filter(s => s === 'attended').length + nonMembers.filter(n => n.status === 'attended').length;
@@ -181,20 +200,71 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
 
           {/* Walk-ins */}
           <div style={{ borderTop:'1.5px solid #E0D5C1', marginTop:16, paddingTop:16 }}>
-            <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1rem', color:'#3D2314', marginBottom:10 }}>Walk-in / Non-member</div>
-            {nonMembers.map((nm, i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 0', borderBottom:'1px solid #E0D5C1' }}>
-                <User size={16} color='#C4AE8F'/>
-                <span style={{ flex:1, fontSize:'0.88rem', color:'#2A1A0E' }}>{nm.name}</span>
-                <span style={{ padding:'3px 10px', borderRadius:20, fontSize:'0.7rem', fontWeight:500, background:'#EEF3E6', color:'#4E6A2E' }}>Walk-in</span>
-              </div>
-            ))}
-            <div style={{ display:'flex', gap:8, marginTop:10 }}>
-              <input placeholder="Full name…" value={nonMemberName} onChange={e => setNonMemberName(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && addNonMember()}
-                style={{ flex:1, padding:'9px 12px', border:'1.5px solid #E0D5C1', borderRadius:8, background:'#F5F0E8', fontFamily:"'DM Sans',sans-serif", fontSize:'0.85rem', color:'#2A1A0E', outline:'none' }}/>
-              <button onClick={addNonMember} style={{ padding:'9px 16px', background:'#7C8C5E', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.85rem', fontWeight:500 }}>Add</button>
+            <div style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'1rem', color:'#3D2314', marginBottom:6 }}>Walk-in / Extra Attendee</div>
+
+            {/* Mode toggle */}
+            <div style={{ display:'flex', gap:6, marginBottom:12 }}>
+              {[['search','Existing Client'],['new','New / Unregistered']].map(([mode, label]) => (
+                <button key={mode} onClick={() => setWalkInMode(mode)} style={{ flex:1, padding:'7px', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.78rem', fontWeight:500, background: walkInMode===mode ? '#3D2314':'#F5F0E8', color: walkInMode===mode ? '#F5F0E8':'#6B5744', border: `1.5px solid ${walkInMode===mode ? '#3D2314':'#E0D5C1'}` }}>
+                  {label}
+                </button>
+              ))}
             </div>
+
+            {walkInMode === 'search' ? (
+              <div>
+                <div style={{ fontSize:'0.78rem', color:'#6B5744', marginBottom:6 }}>Search an existing client — their session will be deducted.</div>
+                <div style={{ position:'relative', marginBottom:8 }}>
+                  <Search size={13} style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'#9C8470' }}/>
+                  <input placeholder="Search by name…" value={walkInSearch} onChange={e => setWalkInSearch(e.target.value)}
+                    style={{ width:'100%', paddingLeft:30, padding:'9px 12px 9px 30px', border:'1.5px solid #E0D5C1', borderRadius:8, background:'#F5F0E8', fontFamily:"'DM Sans',sans-serif", fontSize:'0.85rem', color:'#2A1A0E', outline:'none', boxSizing:'border-box' }}/>
+                </div>
+                {walkInSearch.trim().length > 0 && (() => {
+                  const results = clients.filter(c =>
+                    c.name.toLowerCase().includes(walkInSearch.toLowerCase()) && !localLogs[c.id]
+                  ).slice(0, 5);
+                  return results.length === 0 ? (
+                    <div style={{ fontSize:'0.8rem', color:'#9C8470', padding:'6px 0' }}>No clients found.</div>
+                  ) : (
+                    <div style={{ border:'1.5px solid #E0D5C1', borderRadius:8, overflow:'hidden' }}>
+                      {results.map((c, i) => (
+                        <div key={c.id} onClick={() => addExistingClientWalkIn(c)}
+                          style={{ display:'flex', alignItems:'center', gap:10, padding:'9px 12px', cursor:'pointer', borderBottom: i < results.length-1 ? '1px solid #E0D5C1':'none', background:'#FFFDF9' }}
+                          onMouseEnter={e => e.currentTarget.style.background='#F5F0E8'}
+                          onMouseLeave={e => e.currentTarget.style.background='#FFFDF9'}>
+                          <ClientAvatar avatar={c.avatar} size={26}/>
+                          <div style={{ flex:1 }}>
+                            <div style={{ fontSize:'0.88rem', fontWeight:500, color:'#2A1A0E' }}>{c.name}</div>
+                            <div style={{ fontSize:'0.72rem', color:'#9C8470' }}>{c.pkg || 'No package'}{c.sessionsRemaining != null ? ` · ${c.sessionsRemaining} left` : ''}</div>
+                          </div>
+                          <span style={{ fontSize:'0.72rem', color:'#A0673A', fontWeight:500 }}>+ Add</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div>
+                <div style={{ background:'#F5F1E0', border:'1px solid #DDD0A0', borderRadius:8, padding:'9px 12px', fontSize:'0.78rem', color:'#7A6020', marginBottom:10, display:'flex', gap:6 }}>
+                  ⚠ Session will NOT be auto-deducted. Remember to deduct manually from their client profile.
+                </div>
+                {nonMembers.map((nm, i) => (
+                  <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'8px 0', borderBottom:'1px solid #E0D5C1' }}>
+                    <User size={15} color='#C4AE8F'/>
+                    <span style={{ flex:1, fontSize:'0.88rem', color:'#2A1A0E' }}>{nm.name}</span>
+                    <span style={{ padding:'2px 8px', borderRadius:20, fontSize:'0.7rem', fontWeight:500, background:'#F5F1E0', color:'#7A6020' }}>⚠ Manual deduct</span>
+                    <button onClick={() => setNonMembers(prev => prev.filter((_,j) => j !== i))} style={{ background:'none', border:'none', cursor:'pointer', color:'#C4AE8F', padding:2 }}><X size={13}/></button>
+                  </div>
+                ))}
+                <div style={{ display:'flex', gap:8, marginTop:8 }}>
+                  <input placeholder="Full name…" value={walkInName} onChange={e => setWalkInName(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && addNewNameWalkIn()}
+                    style={{ flex:1, padding:'9px 12px', border:'1.5px solid #E0D5C1', borderRadius:8, background:'#F5F0E8', fontFamily:"'DM Sans',sans-serif", fontSize:'0.85rem', color:'#2A1A0E', outline:'none' }}/>
+                  <button onClick={addNewNameWalkIn} style={{ padding:'9px 16px', background:'#7C8C5E', color:'#fff', border:'none', borderRadius:8, cursor:'pointer', fontFamily:"'DM Sans',sans-serif", fontSize:'0.85rem', fontWeight:500 }}>Add</button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div style={{ display:'flex', gap:8, marginTop:20 }}>
@@ -265,7 +335,7 @@ export default function AdminAttendance() {
     .filter(a => a.status === 'no-show')
     .map(a => {
       const cls    = resolvedClasses.find(c => c.id === a.classId);
-      const client = clients.find(c => c.id === a.clientId);
+      const client = clients.find(c => c.id === a.clientId || c.uid === a.clientId);
       return client && cls ? { client, cls } : null;
     })
     .filter(Boolean);

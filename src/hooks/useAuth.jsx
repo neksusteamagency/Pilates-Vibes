@@ -104,6 +104,16 @@ export function AuthProvider({ children }) {
         linkedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+
+      // ── CRITICAL: Also create a /clients/{uid} doc that just points to the real doc.
+      // This prevents a second "new client" doc from being created if anything re-runs,
+      // and lets uid-based lookups resolve correctly without duplicating data.
+      if (existingClientDoc.id !== uid) {
+        await setDoc(doc(db, 'clientUidIndex', uid), {
+          clientDocId: existingClientDoc.id,
+          createdAt: serverTimestamp(),
+        });
+      }
     } else {
       // ── NEW CLIENT: no existing profile found, create a fresh one.
       // Use uid as the doc ID so the simple c.id === uid lookup works for new clients.
