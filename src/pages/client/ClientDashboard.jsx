@@ -5,7 +5,7 @@ import { useClients } from '../../hooks/useClients';
 import { useBookings } from '../../hooks/useBookings';
 import { useClasses } from '../../hooks/useClasses';
 import { Calendar, Clock, ChevronRight, AlertTriangle, Snowflake, Star, X, Package, CheckCircle, Clock3 } from 'lucide-react';
-import { format, parseISO, isAfter, isBefore, addHours } from 'date-fns';
+import { format, parseISO, isAfter, isBefore, addHours, addDays } from 'date-fns';
 import { db } from '../../firebase/config';
 import { doc, setDoc, getDoc, updateDoc, increment, serverTimestamp, collection, addDoc } from 'firebase/firestore';
 import toast from 'react-hot-toast';
@@ -146,7 +146,19 @@ function CancelConfirmDialog({ booking, cls, onConfirm, onCancel, cancelling }) 
 
 function SessionRow({ booking, cls, last, onCancel, onRate }) {
   const st = statusStyle(booking.status);
-  const dateLabel = booking.classDate ? format(parseISO(booking.classDate), 'MMM d') : booking.weekOf || '';
+
+  // Derive the actual class date from weekOf (Monday) + cls.day offset.
+  // weekOf is always the Monday of the week; cls.day is 0=Mon … 6=Sun.
+  // Falling back to booking.classDate handles any legacy records that stored it directly.
+  let dateLabel = '';
+  if (booking.classDate) {
+    dateLabel = format(parseISO(booking.classDate), 'MMM d');
+  } else if (booking.weekOf && cls?.day != null) {
+    const actualDate = addDays(parseISO(booking.weekOf), cls.day);
+    dateLabel = format(actualDate, 'MMM d');
+  } else if (booking.weekOf) {
+    dateLabel = format(parseISO(booking.weekOf), 'MMM d');
+  }
   const month = dateLabel.split(' ')[0];
   const day   = dateLabel.split(' ')[1];
 
@@ -218,9 +230,10 @@ export default function ClientDashboard() {
   const navigate    = useNavigate();
 
   const { clients, loading: clientsLoading } = useClients();
-  const clientDoc = clients.find(c => c.id === user?.uid || c.uid === user?.uid);
+  const resolvedClientId = user?.clientDocId || user?.uid;
+  const clientDoc = clients.find(c => c.id === resolvedClientId);
 
-  const { bookings, confirmedBookings, loading: bookingsLoading, clientCancelBooking } = useBookings({ clientId: clientDoc?.id ?? user?.uid });
+  const { bookings, confirmedBookings, loading: bookingsLoading, clientCancelBooking } = useBookings({ clientId: resolvedClientId });
   const { classes, loading: classesLoading } = useClasses();
 
   const [cancelTarget,  setCancelTarget]  = useState(null);
@@ -235,11 +248,12 @@ export default function ClientDashboard() {
 
   function getClass(classId) { return classes.find(c => c.id === classId); }
 
-  const sessionsRemaining = clientDoc?.sessionsRemaining ?? 0;
-  const sessionsTotal     = clientDoc?.sessionsTotal     ?? 0;
-  const barPct    = sessionsTotal > 0 ? Math.round((sessionsRemaining / sessionsTotal) * 100) : 0;
-  const lowSessions = sessionsRemaining <= 2 && sessionsTotal > 0;
-  const hasPackage = !!clientDoc?.pkg && sessionsTotal > 0;
+  const isUnlimited     = !!clientDoc?.pkg && clientDoc?.sessionsTotal === null;
+  const sessionsRemaining = isUnlimited ? null : (clientDoc?.sessionsRemaining ?? 0);
+  const sessionsTotal     = isUnlimited ? null : (clientDoc?.sessionsTotal     ?? 0);
+  const barPct      = isUnlimited ? 100 : (sessionsTotal > 0 ? Math.round((sessionsRemaining / sessionsTotal) * 100) : 0);
+  const lowSessions = !isUnlimited && sessionsRemaining <= 2 && sessionsTotal > 0;
+  const hasPackage  = !!clientDoc?.pkg && (isUnlimited || sessionsTotal > 0);
   const isPaid     = clientDoc?.paymentVerified === true;
 
   // Count active confirmed bookings for unpaid limit display
@@ -251,9 +265,16 @@ export default function ClientDashboard() {
     const cls = getClass(cancelTarget.classId);
     if (!cls) { toast.error('Class not found.'); return; }
 
+    // Derive the actual occurrence date: for recurring classes cls.date is undefined,
+    // so compute it from the booking's weekOf + cls.day offset.
+    const classDate = cls.date ||
+      (cancelTarget.weekOf && cls.day != null
+        ? format(addDays(parseISO(cancelTarget.weekOf), cls.day), 'yyyy-MM-dd')
+        : null);
+
     // Enforce 12-hour cancellation window client-side
-    if (cls.date && cls.time) {
-      const classDateTime = new Date(`${cls.date}T${cls.time}:00`);
+    if (classDate && cls.time) {
+      const classDateTime = new Date(`${classDate}T${cls.time}:00`);
       const cutoffMs = classDateTime.getTime() - 12 * 60 * 60 * 1000;
       if (Date.now() >= cutoffMs) {
         toast.error('Cannot cancel within 12 hours of the class. Please contact the studio.');
@@ -264,7 +285,7 @@ export default function ClientDashboard() {
 
     setCancelling(true);
     try {
-      await clientCancelBooking(cancelTarget.id, cancelTarget.classId, cls.date, cls.time, cls, clientDoc);
+      await clientCancelBooking(cancelTarget.id, cancelTarget.classId, classDate, cls.time, cls, clientDoc);
       toast.success('Booking cancelled.');
       setCancelTarget(null);
     } catch (err) {
@@ -359,6 +380,16 @@ export default function ClientDashboard() {
               <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:'0.84rem', color:'#A3C4F5', marginBottom:12 }}>
                 <Snowflake size={15}/> Frozen until {clientDoc.frozenUntil}
               </div>
+            ) : isUnlimited ? (
+              <>
+                <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:6 }}>
+                  <span style={{ fontFamily:"'Cormorant Garant',serif", fontSize:'2.8rem', fontWeight:500, lineHeight:1 }}>∞</span>
+                  <span style={{ fontSize:'0.82rem', color:'#C4AE8F' }}>Unlimited sessions</span>
+                </div>
+                <div style={{ background:'rgba(245,240,232,0.15)', borderRadius:20, height:6, marginBottom:12 }}>
+                  <div style={{ background:'#C4AE8F', height:6, borderRadius:20, width:'100%' }}/>
+                </div>
+              </>
             ) : sessionsTotal > 0 ? (
               <>
                 <div style={{ display:'flex', alignItems:'baseline', gap:6, marginBottom:6 }}>

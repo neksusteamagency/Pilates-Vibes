@@ -6,7 +6,7 @@ import { useClients } from '../../hooks/useClients';
 import { useBookings } from '../../hooks/useBookings';
 import { useTrainers } from '../../hooks/useTrainers';
 import { db } from '../../firebase/config';
-import { doc, writeBatch } from 'firebase/firestore';
+import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import toast from 'react-hot-toast';
 
 const DAYS_OF_WEEK = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -409,11 +409,11 @@ function ClassModal({
 
       // Cancel all bookings
       [...confirmedBookings, ...waitlistBookings].forEach(booking => {
-        batch.update(doc(db, 'bookings', booking.id), { status: 'cancelled', updatedAt: new Date() });
+        batch.update(doc(db, 'bookings', booking.id), { status: 'cancelled', updatedAt: serverTimestamp() });
       });
 
       // Cancel the class itself
-      batch.update(doc(db, 'classes', cls.id), { status: 'cancelled', cancelledAt: new Date(), updatedAt: new Date() });
+      batch.update(doc(db, 'classes', cls.id), { status: 'cancelled', cancelledAt: serverTimestamp(), updatedAt: serverTimestamp() });
 
       // Restore sessions for all confirmed (package-paying) clients
       for (const booking of confirmedBookings) {
@@ -426,7 +426,7 @@ function ClassModal({
             sessionsRemaining: newRemaining,
             sessionsUsed:      newUsed,
             status:            newStatus,
-            updatedAt:         new Date(),
+            updatedAt:         serverTimestamp(),
           });
         }
       }
@@ -547,7 +547,7 @@ function ClassModal({
                   // BUG FIX: use actualBooked (real confirmed count for this week)
                   // instead of cls.booked (shared counter across all weeks)
                   { icon: Users, label: 'Capacity', val: `${actualBooked} / ${cls.capacity || 0}` },
-                  { icon: Users, label: 'Status',   val: cls.status || 'available' },
+                  { icon: Users, label: 'Status',   val: actualBooked >= (cls.capacity || 0) ? 'Full' : 'Available' },
                 ].map(({ icon: Icon, label, val }) => (
                   <div key={label} style={{ background: '#F5F0E8', borderRadius: 8, padding: '10px 14px', border: '1px solid #E0D5C1' }}>
                     <div style={{ fontSize: '0.7rem', color: '#9C8470', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -719,7 +719,8 @@ function ClassModal({
                   availableClients={availableClients}
                   onAdd={async (clientId) => {
                     // BUG FIX: use occurrence date, not week Monday
-                    const weekOf = cls._occurrenceDate || cls.date || format(weekStart, 'yyyy-MM-dd');
+                    // weekOf must always be the Monday of the week to match how bookings are stored
+                    const weekOf = format(weekStart, 'yyyy-MM-dd');
                     await addToWaitlist(cls.id, clientId, weekOf, waitlistBookings.length + 1);
                   }}
                   saving={saving}
@@ -788,7 +789,16 @@ export default function AdminSchedule() {
   // BUG FIX: add cancelBooking to the destructure
   const { addBooking, addToWaitlist, approveWaitlist, rejectWaitlist, cancelBooking } = useBookings();
 
-  const weekStart    = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weekOffset * 7);
+  const weekStart = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weekOffset * 7);
+  const weekOf    = format(weekStart, 'yyyy-MM-dd');
+
+  // Fetch all confirmed bookings for this week so the grid can derive real fullness
+  // per class, instead of relying on the stale cls.booked/cls.status counter.
+  const { bookings: weekBookings } = useBookings({ weekOf });
+
+  function getBookedCount(classId) {
+    return weekBookings.filter(b => b.classId === classId && b.status === 'confirmed').length;
+  }
   const trainerNames = ['All', ...trainers.map(t => t.name)];
 
   const resolvedClasses = resolveClassesForWeek(classes, weekStart);
@@ -881,16 +891,20 @@ export default function AdminSchedule() {
                 const cls = getClass(di, time);
                 return (
                   <div key={di} style={{ padding: '5px 4px', minHeight: 58 }}>
-                    {cls ? (
-                      <div onClick={() => { console.log(cls); setSelectedClass(cls); }} style={{ borderRadius: 8, padding: '7px 9px', cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3, border: `1.5px solid ${cls.status === 'full' ? '#DDB89E' : '#C8D9B0'}`, background: cls.status === 'full' ? '#F5EDE8' : '#EEF3E6' }}>
+                    {cls ? (() => {
+                      const bookedCount = getBookedCount(cls.id);
+                      const isFull      = bookedCount >= (cls.capacity || 0);
+                      return (
+                      <div onClick={() => { setSelectedClass(cls); }} style={{ borderRadius: 8, padding: '7px 9px', cursor: 'pointer', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 3, border: `1.5px solid ${isFull ? '#DDB89E' : '#C8D9B0'}`, background: isFull ? '#F5EDE8' : '#EEF3E6' }}>
                         <div style={{ fontSize: '0.76rem', fontWeight: 600, color: '#3D2314', display: 'flex', alignItems: 'center', gap: 4 }}>
                           {cls.name}
                           {cls.isRecurring && <RefreshCw size={8} style={{ color: '#9C8470', flexShrink: 0 }} />}
                         </div>
                         <div style={{ fontSize: '0.66rem', color: '#9C8470' }}>{cls.trainer}</div>
-                        <div style={{ fontSize: '0.63rem', fontWeight: 600, textTransform: 'uppercase', color: cls.status === 'full' ? '#8C4A2A' : '#4E6A2E' }}>{cls.status === 'full' ? 'Full' : 'Available'}</div>
+                        <div style={{ fontSize: '0.63rem', fontWeight: 600, textTransform: 'uppercase', color: isFull ? '#8C4A2A' : '#4E6A2E' }}>{isFull ? 'Full' : 'Available'}</div>
                       </div>
-                    ) : <div style={{ height: '100%', minHeight: 58 }} />}
+                      );
+                    })() : <div style={{ height: '100%', minHeight: 58 }} />}
                   </div>
                 );
               })}
@@ -902,9 +916,11 @@ export default function AdminSchedule() {
       {/* Mobile list */}
       <div className="mobile-schedule-list" style={{ display: 'none', marginTop: 16 }}>
         {filtered.filter(c => c.status !== 'cancelled').sort((a, b) => a.day - b.day || a.time.localeCompare(b.time)).map(cls => {
-          const date = addDays(weekStart, cls.day);
+          const date        = addDays(weekStart, cls.day);
+          const bookedCount = getBookedCount(cls.id);
+          const isFull      = bookedCount >= (cls.capacity || 0);
           return (
-            <div key={cls.id + (cls._occurrenceDate || '')} onClick={() => { console.log(cls); setSelectedClass(cls); }} style={{ background: '#FAF7F2', borderRadius: 12, border: '1px solid #E0D5C1', padding: '14px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
+            <div key={cls.id + (cls._occurrenceDate || '')} onClick={() => setSelectedClass(cls)} style={{ background: '#FAF7F2', borderRadius: 12, border: '1px solid #E0D5C1', padding: '14px 16px', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 14, cursor: 'pointer' }}>
               <div style={{ textAlign: 'center', minWidth: 42 }}>
                 <div style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: '#9C8470' }}>{format(date, 'EEE')}</div>
                 <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.5rem', fontWeight: 500, color: '#3D2314', lineHeight: 1 }}>{format(date, 'd')}</div>
@@ -917,7 +933,7 @@ export default function AdminSchedule() {
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#9C8470', marginTop: 2 }}>{fmt12(cls.time)} · {cls.trainer}</div>
               </div>
-              <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 500, background: cls.status === 'full' ? '#F5EDE8' : '#EEF3E6', color: cls.status === 'full' ? '#8C4A2A' : '#4E6A2E' }}>{cls.status === 'full' ? 'Full' : 'Available'}</span>
+              <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 500, background: isFull ? '#F5EDE8' : '#EEF3E6', color: isFull ? '#8C4A2A' : '#4E6A2E' }}>{isFull ? 'Full' : 'Available'}</span>
             </div>
           );
         })}

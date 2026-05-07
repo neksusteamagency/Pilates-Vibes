@@ -248,34 +248,65 @@ function ClientModal({ client, onClose, updateClient, removeClient, freezeClient
   async function loadHistory() {
     setLoadingHistory(true);
     try {
-      // Query by both the Firestore doc ID AND the uid field, because:
-      // - Admin-created clients have an auto-generated doc ID; attendance may use client.id
-      // - After the client registers, their uid is stamped on the doc; attendance may use client.uid
-      // We deduplicate by attendance doc ID to avoid showing the same record twice.
+      // A client can be stored under two IDs:
+      // - client.id  = the Firestore doc ID (may be a random ID for admin-created clients)
+      // - client.uid = the Firebase Auth uid stamped after the client self-registers
       const ids = [...new Set([client.id, client.uid].filter(Boolean))];
-      const snapshots = await Promise.all(
+
+      // ── 1. Fetch attendance records (have actual attended/no-show status) ──
+      const attendanceSnaps = await Promise.all(
         ids.map(id =>
           getDocs(query(collection(db, 'attendance'), where('clientId', '==', id), orderBy('date', 'desc')))
         )
       );
 
-      // Merge and deduplicate
-      const seen = new Set();
-      const allDocs = [];
-      for (const snap of snapshots) {
+      // ── 2. Fetch booking records (confirmed, cancelled — covers sessions
+      //       where the trainer never marked attendance) ──
+      const bookingSnaps = await Promise.all(
+        ids.map(id =>
+          getDocs(query(collection(db, 'bookings'), where('clientId', '==', id)))
+        )
+      );
+
+      // ── 3. Build a map of classId+weekOf → attendance record (wins over booking) ──
+      const attendanceByKey = {};
+      const seenAttendanceIds = new Set();
+      for (const snap of attendanceSnaps) {
         for (const d of snap.docs) {
-          if (!seen.has(d.id)) {
-            seen.add(d.id);
-            allDocs.push(d);
-          }
+          if (seenAttendanceIds.has(d.id)) continue;
+          seenAttendanceIds.add(d.id);
+          const data = d.data();
+          const key = (data.classId || '') + '|' + (data.date || d.id);
+          attendanceByKey[key] = { ...data, _source: 'attendance' };
         }
       }
 
-      // Sort merged results by date desc
-      allDocs.sort((a, b) => (b.data().date || '').localeCompare(a.data().date || ''));
+      // ── 4. Collect booking records, skip any already covered by attendance ──
+      const seenBookingIds = new Set();
+      const bookingRecords = [];
+      for (const snap of bookingSnaps) {
+        for (const d of snap.docs) {
+          if (seenBookingIds.has(d.id)) continue;
+          seenBookingIds.add(d.id);
+          const data = d.data();
+          if (!['confirmed', 'cancelled', 'attended', 'no-show'].includes(data.status)) continue;
+          // Use weekOf as the date for bookings (it's the Monday of the week)
+          const date = data.weekOf || data.date || '';
+          const key  = (data.classId || '') + '|' + date;
+          // Skip if an attendance record already covers this slot
+          if (attendanceByKey[key]) continue;
+          bookingRecords.push({ ...data, date, _source: 'booking' });
+        }
+      }
 
-      const records = await Promise.all(allDocs.map(async d => {
-        const data = d.data();
+      // ── 5. Merge attendance + booking records and sort by date desc ──
+      const merged = [
+        ...Object.values(attendanceByKey),
+        ...bookingRecords,
+      ].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+      // ── 6. Resolve class names for all records ──
+      const records = await Promise.all(merged.map(async data => {
         let className = data.className || '—';
         if (data.classId && className === '—') {
           try {

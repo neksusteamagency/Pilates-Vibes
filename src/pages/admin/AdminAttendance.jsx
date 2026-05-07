@@ -56,7 +56,8 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
   const date    = addDays(weekStart, cls.day);
   const dateStr = format(date, 'yyyy-MM-dd');
 
-  const { bookings } = useBookings({ classId: cls.id });
+  // Scope to this week only — without weekOf, bookings from ALL past weeks appear
+  const { bookings } = useBookings({ classId: cls.id, weekOf });
 
   // Match by doc ID or uid to handle pre/post-merge accounts
   const findClient = (clientId) => clients.find(c => c.id === clientId || c.uid === clientId);
@@ -306,13 +307,19 @@ export default function AdminAttendance() {
     dateTo:   weekEndStr,
   });
 
+  // Real confirmed booking count per class for this week
+  const { bookings: weekBookings } = useBookings({ weekOf });
+  function getBookedCount(classId) {
+    return weekBookings.filter(b => b.classId === classId && b.status === 'confirmed').length;
+  }
+
   const resolvedClasses = resolveClassesForWeek(classes, weekStart);
 
   const todayClasses = resolvedClasses.filter(c => {
     const expectedDate = format(addDays(weekStart, todayIndex), 'yyyy-MM-dd');
     return c.date === expectedDate;
   });
-  const totalToday     = todayClasses.reduce((s, c) => s + (c.booked || 0), 0);
+  const totalToday = todayClasses.reduce((s, c) => s + getBookedCount(c.id), 0);
   const attendedToday  = attendance.filter(a => a.date === todayStr && a.status === 'attended').length;
   const noShowToday    = attendance.filter(a => a.date === todayStr && a.status === 'no-show').length;
 
@@ -444,7 +451,7 @@ export default function AdminAttendance() {
                     {isSaved && <span style={{ fontSize:'0.68rem', color:'#4E6A2E', background:'#EEF3E6', padding:'2px 8px', borderRadius:20, fontWeight:500 }}>✓ Logged</span>}
                   </div>
                   <div style={{ fontSize:'0.78rem', color:'#9C8470', marginTop:2 }}>
-                    {fmt12(cls.time)} · {cls.trainer} · {cls.booked || 0}/{cls.capacity} booked
+                    {fmt12(cls.time)} · {cls.trainer} · {getBookedCount(cls.id)}/{cls.capacity} booked
                   </div>
                   <div style={{ display:'flex', gap:6, marginTop:7, alignItems:'center' }}>
                     {isSaved ? (
@@ -454,7 +461,7 @@ export default function AdminAttendance() {
                       </>
                     ) : (
                       <div style={{ display:'flex', gap:3 }}>
-                        {Array.from({ length: cls.booked || 0 }).map((_, ai) => (
+                        {Array.from({ length: getBookedCount(cls.id) }).map((_, ai) => (
                           <div key={ai} style={{ width:8, height:8, borderRadius:'50%', background:'#E0D5C1' }}/>
                         ))}
                       </div>
@@ -490,7 +497,7 @@ export default function AdminAttendance() {
             ) : todayClasses.map((cls, i) => {
               const clsAttended = attendance.filter(a => a.classId === cls.id && a.date === todayStr && a.status === 'attended').length;
               const clsNoShows  = attendance.filter(a => a.classId === cls.id && a.date === todayStr && a.status === 'no-show').length;
-              const total = cls.booked || 0;
+              const total = getBookedCount(cls.id);
               const pct   = total > 0 ? Math.round((clsAttended / total) * 100) : 0;
               return (
                 <div key={cls.id} style={{ marginBottom: i < todayClasses.length-1 ? 14 : 0 }}>

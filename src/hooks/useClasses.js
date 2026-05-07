@@ -151,10 +151,7 @@ export function resolveClassesForWeek(classes, weekStart) {
     if (!cls.isRecurring) {
       resolved.push(cls);
     } else {
-      const occurrenceDate = format(
-        new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + cls.day),
-        'yyyy-MM-dd'
-      );
+      const occurrenceDate = format(addDays(weekStart, cls.day), 'yyyy-MM-dd');
 
       const afterStart  = occurrenceDate >= cls.startDate;
       const beforeEnd   = !cls.endDate || occurrenceDate <= cls.endDate;

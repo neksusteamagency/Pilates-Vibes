@@ -1,18 +1,24 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { useClasses, resolveClassesForWeek } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
 import { useClients } from '../../hooks/useClients';
 import { useAttendance } from '../../hooks/useAttendance';
-import { ChevronLeft, ChevronRight, Users, Check, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Users, Check, X, DollarSign } from 'lucide-react';
 import { format, addDays, startOfWeek } from 'date-fns';
 import toast from 'react-hot-toast';
+import { db } from '../../firebase/config';
+import { collection, query, where, orderBy, getDocs } from 'firebase/firestore';
 
 export default function TrainerSchedule() {
   const { user } = useAuth();
   const [weekOffset, setWeekOffset]       = useState(0);
   const [selectedClass, setSelectedClass] = useState(null);
   const [saving, setSaving]               = useState(false);
+
+  const [activeTab, setActiveTab] = useState('schedule');
+  const [payments,  setPayments]  = useState([]);
+  const [loadingPay, setLoadingPay] = useState(false);
 
   const weekStart = addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), weekOffset * 7);
   const weekOf    = format(weekStart, 'yyyy-MM-dd');
@@ -72,7 +78,10 @@ export default function TrainerSchedule() {
     if (!selectedClass) return;
     setSaving(true);
     try {
-      await saveClassAttendance(selectedClass.id, weekOf, localAttendance);
+      // Pass the actual class occurrence date (e.g. Wednesday's date), not the
+      // week Monday. weekOf is passed as the 4th arg so booking status updates match.
+      const classDate = selectedClass.date || format(addDays(weekStart, selectedClass.day), 'yyyy-MM-dd');
+      await saveClassAttendance(selectedClass.id, classDate, localAttendance, weekOf);
       toast.success('Attendance saved!');
       setSelectedClass(null);
     } catch (err) {
@@ -83,10 +92,45 @@ export default function TrainerSchedule() {
     }
   }
 
+  // Load payments from trainer_payments collection scoped to this trainer's doc ID
+  async function loadPayments() {
+    if (!user?.uid) return;
+    setLoadingPay(true);
+    try {
+      const q    = query(
+        collection(db, 'trainer_payments'),
+        where('trainerId', '==', user.uid),
+        orderBy('createdAt', 'desc')
+      );
+      const snap = await getDocs(q);
+      setPayments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (err) { console.error('loadPayments:', err); }
+    finally { setLoadingPay(false); }
+  }
+
+  useEffect(() => {
+    if (activeTab === 'payments' && payments.length === 0) loadPayments();
+  }, [activeTab]);
+
   const loading = classesLoading || bookingsLoading;
 
   return (
     <div style={{ padding: '28px 32px 40px' }}>
+
+      {/* Tab bar */}
+      <div style={{ display: 'flex', borderBottom: '1.5px solid #E0D5C1', marginBottom: 20 }}>
+        {[['schedule', 'My Schedule'], ['payments', 'My Payments']].map(([key, label]) => (
+          <button key={key} onClick={() => setActiveTab(key)} style={{
+            padding: '10px 20px', background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: '0.84rem', fontWeight: activeTab === key ? 500 : 400,
+            color: activeTab === key ? '#3D2314' : '#9C8470',
+            borderBottom: activeTab === key ? '2px solid #3D2314' : '2px solid transparent',
+            fontFamily: "'DM Sans',sans-serif", transition: 'all 0.18s',
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {activeTab === 'schedule' && <>
 
       {/* Week nav */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
@@ -231,6 +275,43 @@ export default function TrainerSchedule() {
       )}
 
       <style>{`@media(max-width:700px){.trainer-resp{grid-template-columns:1fr!important;}}`}</style>
+
+      </>} {/* end schedule tab */}
+
+      {/* ── PAYMENTS TAB ── */}
+      {activeTab === 'payments' && (
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.1rem', color: '#3D2314' }}>Payment History</div>
+            <button onClick={loadPayments} style={{ fontSize: '0.78rem', color: '#A0673A', background: 'none', border: 'none', cursor: 'pointer', fontFamily: "'DM Sans',sans-serif" }}>Refresh</button>
+          </div>
+          {loadingPay ? (
+            <div style={{ textAlign: 'center', padding: '32px 0', color: '#C4AE8F', fontSize: '0.85rem' }}>Loading payments…</div>
+          ) : payments.length === 0 ? (
+            <div style={{ background: '#FAF7F2', borderRadius: 14, border: '1px solid #E0D5C1', padding: '40px', textAlign: 'center', color: '#9C8470', fontSize: '0.88rem' }}>
+              <DollarSign size={28} color='#E0D5C1' style={{ marginBottom: 10 }}/>
+              <div>No payments recorded yet.</div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {payments.map(p => (
+                <div key={p.id} style={{ background: '#FAF7F2', borderRadius: 12, border: '1px solid #E0D5C1', padding: '16px 18px', boxShadow: '0 2px 10px rgba(61,35,20,0.07)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <div style={{ fontFamily: "'Cormorant Garant',serif", fontSize: '1.5rem', fontWeight: 500, color: '#3D2314' }}>${p.amount}</div>
+                    <span style={{ padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 500, background: '#EEF3E6', color: '#4E6A2E' }}>Received</span>
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#9C8470' }}>
+                    {p.date} · {p.method}
+                    {p.sessions > 0 && <span> · {p.sessions} sessions covered</span>}
+                  </div>
+                  {p.notes && <div style={{ fontSize: '0.78rem', color: '#6B5744', marginTop: 4 }}>{p.notes}</div>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }

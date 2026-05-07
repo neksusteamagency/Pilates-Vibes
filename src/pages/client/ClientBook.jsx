@@ -35,7 +35,7 @@ function getPackageBlockReason(clientDoc, confirmedBookings) {
   const today = new Date().toISOString().split('T')[0];
 
   // No package chosen yet
-  if (!clientDoc.pkg || clientDoc.sessionsTotal === 0)
+  if (!clientDoc.pkg || (clientDoc.sessionsTotal === 0 && clientDoc.sessionsTotal !== null))
     return 'NO_PACKAGE';
 
   if (clientDoc.expiry && clientDoc.expiry < today)
@@ -44,7 +44,8 @@ function getPackageBlockReason(clientDoc, confirmedBookings) {
   if (clientDoc.isFrozen)
     return 'Your package is currently frozen. Please contact the studio to unfreeze it.';
 
-  if ((clientDoc.sessionsRemaining ?? 0) <= 0)
+  // null sessionsRemaining = unlimited package — never block on sessions count
+  if (clientDoc.sessionsRemaining !== null && (clientDoc.sessionsRemaining ?? 0) <= 0)
     return 'You have no sessions remaining. Please contact the studio to renew your package.';
 
   // Payment gate: unpaid clients can only have 1 confirmed booking total
@@ -265,7 +266,7 @@ function PackagePickerModal({ clientId, onClose, onSelected }) {
 }
 
 // ── Schedule Grid ───────────────────────────────────────────────────────────
-function ScheduleGrid({ weekClasses, weekStart, weekDates, alreadyBooked, onPickClass }) {
+function ScheduleGrid({ weekClasses, weekStart, weekDates, alreadyBooked, onPickClass, getBookedCount }) {
   // Collect unique sorted time slots
   const timeSlots = [...new Set(weekClasses.map(c => c.time))].sort();
 
@@ -319,8 +320,10 @@ const cls = weekClasses.find(c => c.day === di && c.time === time && c.date === 
                   return <td key={di} style={{ borderBottom:'1px solid #F0EAE3', padding:'6px 4px' }}></td>;
                 }
                 const booked       = alreadyBooked(cls.id);
-                const isFull       = cls.status === 'full';
-                const waitlistFull = isFull && cls.booked >= cls.capacity + 3;
+                // Derive fullness from actual confirmed booking count, not stale cls.booked/cls.status
+                const bookedCount  = getBookedCount(cls.id);
+                const isFull       = bookedCount >= cls.capacity;
+                const waitlistFull = isFull && bookedCount >= cls.capacity + 3;
                 const disabled     = waitlistFull;
                 return (
                   <td key={di} style={{ padding:'6px 4px', borderBottom:'1px solid #F0EAE3', verticalAlign:'middle' }}>
@@ -374,8 +377,11 @@ export default function ClientBook() {
 
   const { classes, loading: classesLoading } = useClasses();
   const { clients } = useClients();
-  const clientDoc = clients.find(c => c.id === user?.uid || c.uid === user?.uid);
-  const { bookings, confirmedBookings, addClientBooking, addToWaitlist } = useBookings({ clientId: clientDoc?.id ?? user?.uid });
+  // useAuth resolves the real Firestore client doc ID (via clientUidIndex for merged accounts).
+  // Falling back to clients.find() is unreliable when the doc ID !== uid.
+  const resolvedClientId = user?.clientDocId || user?.uid;
+  const clientDoc = clients.find(c => c.id === resolvedClientId);
+  const { bookings, confirmedBookings, addClientBooking, addToWaitlist } = useBookings({ clientId: resolvedClientId });
 
   const [step,          setStep]          = useState(1);
   const [selected,      setSelected]      = useState(null);
@@ -392,14 +398,23 @@ export default function ClientBook() {
   );
   const weekClasses = resolveClassesForWeek(classes, weekStart);
 
+  // Also fetch all confirmed bookings for this week (all classes) so we can
+  // derive real fullness per class without relying on stale cls.booked/cls.status.
+  const { bookings: allWeekBookings } = useBookings({ weekOf });
+
   function alreadyBooked(classId) {
     return bookings.some(b => b.classId === classId && b.weekOf === weekOf && b.status === 'confirmed');
+  }
+
+  // Returns the real confirmed booking count for a class this week.
+  function getBookedCount(classId) {
+    return allWeekBookings.filter(b => b.classId === classId && b.status === 'confirmed').length;
   }
 
   // Check if client can change package: only allowed if no sessions remain
   const canChangePackage = !clientDoc?.pkg ||
     clientDoc?.sessionsTotal === 0 ||
-    (clientDoc?.sessionsRemaining ?? 0) <= 0;
+    (clientDoc?.sessionsRemaining !== null && (clientDoc?.sessionsRemaining ?? 0) <= 0);
 
   function pickClass(cls) {
     const classDateTime = new Date(`${cls.date}T${cls.time}:00`);
@@ -408,10 +423,13 @@ export default function ClientBook() {
       toast.error('Bookings close 30 minutes before the class starts.');
       return;
     }
-    if (cls.status === 'full' && cls.booked >= (cls.capacity + 3)) return;
+    // Derive fullness from real confirmed count, not stale cls.booked/cls.status
+    const bookedCount = getBookedCount(cls.id);
+    const isFull      = bookedCount >= cls.capacity;
+    if (isFull && bookedCount >= cls.capacity + 3) return;
     if (alreadyBooked(cls.id)) { toast.error('You already have this class booked.'); return; }
 
-    if (cls.status !== 'full') {
+    if (!isFull) {
       const blockReason = getPackageBlockReason(clientDoc, confirmedBookings);
 
       if (blockReason === 'NO_PACKAGE') {
@@ -432,24 +450,22 @@ export default function ClientBook() {
       }
     }
 
-    setSelected(cls);
+    // Attach real fullness to the selected class object so confirm() and step 2 use it
+    setSelected({ ...cls, _isFull: isFull });
     setStep(2);
   }
 
   async function confirm() {
     if (!user?.uid || !selected) return;
 
-    // Always use the Firestore client doc ID — not user.uid.
-    // When the admin creates a client manually, the doc ID is a random Firestore ID,
-    // and user.uid is only stored as a field inside it after phone-linking.
-    // Using user.uid here would save the booking under the wrong clientId.
-    const clientId = clientDoc?.id;
+    // Always use the resolved Firestore client doc ID (set at top of component).
+    const clientId = resolvedClientId;
     if (!clientId) { toast.error('Client profile not found. Please contact the studio.'); return; }
 
     setConfirming(true);
     try {
-      if (selected.status === 'full') {
-        const waitlistCount = bookings.filter(b =>
+      if (selected._isFull) {
+        const waitlistCount = allWeekBookings.filter(b =>
           b.classId === selected.id && b.weekOf === weekOf && b.status === 'waitlist'
         ).length;
         if (waitlistCount >= 3) { toast.error('Waitlist is full for this class.'); setConfirming(false); return; }
@@ -472,7 +488,7 @@ export default function ClientBook() {
     ? `Hi! I'd like to confirm my booking at Pilates Vibes:\n${selected.name} with ${selected.trainer}\n${format(addDays(weekStart, selected.day), 'EEE, MMM d')} at ${selected.time}\n\nPlease note: any changes must be made at least 12 hours in advance, otherwise a session will be deducted. 🌿`
     : '';
 
-  const isWaitlist = selected?.status === 'full';
+  const isWaitlist = selected?._isFull === true;
 
   return (
     <div style={{ padding:'28px 32px 40px', maxWidth:760, margin:'0 auto' }}>
@@ -481,7 +497,7 @@ export default function ClientBook() {
       <BlockedModal message={blockedMsg} onClose={() => setBlockedMsg(null)} />
       {showPkgPicker && (
         <PackagePickerModal
-          clientId={clientDoc?.id ?? user?.uid}
+          clientId={resolvedClientId}
           onClose={() => setShowPkgPicker(false)}
           onSelected={() => { setShowPkgPicker(false); }}
         />
@@ -567,6 +583,7 @@ export default function ClientBook() {
               weekDates={weekDates}
               alreadyBooked={alreadyBooked}
               onPickClass={pickClass}
+              getBookedCount={getBookedCount}
             />
           )}
         </div>
@@ -603,9 +620,11 @@ export default function ClientBook() {
           </div>
 
           {/* Sessions remaining notice */}
-          {clientDoc && clientDoc.sessionsTotal > 0 && (
+          {clientDoc && (clientDoc.sessionsTotal > 0 || clientDoc.sessionsTotal === null) && (
             <div style={{ background:'#F5F0E8', border:'1px solid #E0D5C1', borderRadius:8, padding:'10px 14px', fontSize:'0.8rem', color:'#6B5744', marginBottom:14 }}>
-              📦 You have <strong>{clientDoc.sessionsRemaining}</strong> session{clientDoc.sessionsRemaining !== 1 ? 's' : ''} remaining after this booking.
+              {clientDoc.sessionsTotal === null
+                ? '📦 You have an Unlimited package — no session deducted.'
+                : <>📦 You have <strong>{clientDoc.sessionsRemaining}</strong> session{clientDoc.sessionsRemaining !== 1 ? 's' : ''} remaining after this booking.</>}
             </div>
           )}
 

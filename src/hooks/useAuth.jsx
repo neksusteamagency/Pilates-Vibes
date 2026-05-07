@@ -59,28 +59,55 @@ export function AuthProvider({ children }) {
   const [user, setUser]       = useState(null);
   const [role, setRole]       = useState(null);
   const [loading, setLoading] = useState(true);
+  // Tracks whether the very first auth check has completed.
+  // Subsequent auth changes (login/logout) must not re-set loading=true
+  // or the router will flash back to the login page mid-navigation.
+  const initialCheckDone = { current: false };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          // Small delay so that register() Firestore writes finish before
-          // onAuthStateChanged tries to read the docs.
-          await new Promise(r => setTimeout(r, 500));
-
           const snap = await getDoc(doc(db, 'users', firebaseUser.uid));
           if (snap.exists()) {
             const data = snap.data();
 
-            // If this uid has a pointer in clientUidIndex, use that real doc ID
-            // for any downstream lookups (the merge path created it).
+            // Resolve the real Firestore client doc ID for this user.
+            // Priority order:
+            // 1. clientUidIndex — created during phone-merge registration
+            // 2. clients collection search by uid field — catches cases where
+            //    the index was never written but the uid was stamped on the doc
+            // 3. Fall back to uid itself (new clients whose doc ID === uid)
             let clientDocId = firebaseUser.uid;
-            try {
-              const idxSnap = await getDoc(doc(db, 'clientUidIndex', firebaseUser.uid));
-              if (idxSnap.exists()) {
-                clientDocId = idxSnap.data().clientDocId;
-              }
-            } catch (_) { /* index doesn't exist for new clients — that's fine */ }
+            // Only run client doc resolution for clients, not trainers/admins.
+            // This avoids unnecessary Firestore queries and index errors for trainers.
+            if ((data.role || 'client') === 'client') {
+              try {
+                const idxSnap = await getDoc(doc(db, 'clientUidIndex', firebaseUser.uid));
+                if (idxSnap.exists()) {
+                  clientDocId = idxSnap.data().clientDocId;
+                } else {
+                  // Index missing — search clients collection by uid field
+                  try {
+                    const uidSnap = await getDocs(
+                      query(collection(db, 'clients'), where('uid', '==', firebaseUser.uid))
+                    );
+                    if (!uidSnap.empty) {
+                      clientDocId = uidSnap.docs[0].id;
+                      // Write the index so future logins skip this query
+                      if (clientDocId !== firebaseUser.uid) {
+                        try {
+                          await setDoc(doc(db, 'clientUidIndex', firebaseUser.uid), {
+                            clientDocId,
+                            createdAt: serverTimestamp(),
+                          });
+                        } catch (_) { /* index write failed — non-fatal */ }
+                      }
+                    }
+                  } catch (_) { /* clients query failed (e.g. missing index) — non-fatal */ }
+                }
+              } catch (_) { /* clientUidIndex read failed — non-fatal */ }
+            }
 
             setUser({
               uid:          firebaseUser.uid,
@@ -105,7 +132,13 @@ export function AuthProvider({ children }) {
         setUser(null);
         setRole(null);
       }
-      setLoading(false);
+      // Only set loading=false once — for the initial check.
+      // After that, auth state changes (login/logout) update user/role directly
+      // without touching loading, so the router never flashes back to login.
+      if (!initialCheckDone.current) {
+        initialCheckDone.current = true;
+        setLoading(false);
+      }
     });
     return () => unsub();
   }, []);
@@ -139,6 +172,10 @@ export function AuthProvider({ children }) {
     const cred = await createUserWithEmailAndPassword(auth, email, password);
     const uid  = cred.user.uid;
     const avatar = name.trim().split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+
+    // Small delay so Firestore writes below complete before onAuthStateChanged
+    // tries to read the user doc. Only needed here at registration, not on login.
+    await new Promise(r => setTimeout(r, 500));
 
     // ── Step 4: Create /users/{uid} (role + profile, always needed) ──
     await setDoc(doc(db, 'users', uid), {

@@ -73,7 +73,13 @@ export default function AdminOverview() {
   const { clients }                      = useClients();
   const { classes }                      = useClasses();
   const { attendance, logAttendance }    = useAttendance({ date: today });
-  const { waitlist }                     = useBookings();
+  const weekOf = format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd');
+  const { bookings: weekBookings, waitlist } = useBookings({ weekOf });
+
+  // Real confirmed booking count per class for this week — avoids stale cls.booked
+  function getBookedCount(classId) {
+    return weekBookings.filter(b => b.classId === classId && b.status === 'confirmed').length;
+  }
 
   // ── Derived stats ────────────────────────────────────────
   const activeMembers  = clients.filter(c => c.status === 'active' && !c.isFrozen).length;
@@ -93,7 +99,7 @@ const remainingToday = todayClasses.filter(c => {
   const lowSessionClients = clients.filter(c =>
     c.sessionsRemaining !== null && c.sessionsRemaining !== undefined && c.sessionsRemaining <= 2
   );
-  const lowAttendanceClasses = todayClasses.filter(c => c.booked <= 2 && c.booked > 0);
+  const lowAttendanceClasses = todayClasses.filter(c => { const n = getBookedCount(c.id); return n <= 2 && n > 0; });
 
   const alerts = [
     ...lowSessionClients.length > 0 ? [{
@@ -102,7 +108,7 @@ const remainingToday = todayClasses.filter(c => {
     }] : [],
     ...lowAttendanceClasses.map(c => ({
       type: 'warning',
-      message: `${fmt12(c.time)} ${c.name} has only ${c.booked} participant${c.booked === 1 ? '' : 's'} — consider cancellation.`,
+      message: `${fmt12(c.time)} ${c.name} has only ${getBookedCount(c.id)} participant${getBookedCount(c.id) === 1 ? '' : 's'} — consider cancellation.`,
     })),
   ];
 
@@ -235,14 +241,14 @@ const remainingToday = todayClasses.filter(c => {
               <div style={{ width: 1.5, height: 36, background: '#E0D5C1', borderRadius: 2, flexShrink: 0 }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 500, fontSize: '0.92rem', color: '#2A1A0E' }}>{c.name}</div>
-                <div style={{ fontSize: '0.78rem', color: '#9C8470', marginTop: 2 }}>{c.trainer} · {c.booked} participants</div>
+                <div style={{ fontSize: '0.78rem', color: '#9C8470', marginTop: 2 }}>{c.trainer} · {getBookedCount(c.id)} participants</div>
               </div>
               <span style={{
                 padding: '3px 10px', borderRadius: 20, fontSize: '0.72rem', fontWeight: 500,
-                background: c.status === 'full' ? '#F5EDE8' : '#EEF3E6',
-                color: c.status === 'full' ? '#8C4A2A' : '#4E6A2E',
+                background: getBookedCount(c.id) >= (c.capacity||0) ? '#F5EDE8' : '#EEF3E6',
+                color: getBookedCount(c.id) >= (c.capacity||0) ? '#8C4A2A' : '#4E6A2E',
               }}>
-                {c.status === 'full' ? 'Full' : 'Available'}
+                {getBookedCount(c.id) >= (c.capacity||0) ? 'Full' : 'Available'}
               </span>
             </div>
           ))}

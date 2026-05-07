@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase/config';
 import {
   collection, onSnapshot, doc, getDocs,
-  addDoc, updateDoc, setDoc,
+  addDoc, updateDoc, setDoc, getDoc,
   query, where, orderBy, serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { format } from 'date-fns';

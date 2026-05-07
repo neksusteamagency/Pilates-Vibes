@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { MessageSquare, AlertTriangle, Clock, Check, Bell, ShoppingBag } from 'lucide-react';
+import { MessageSquare, AlertTriangle, Clock, Check, Bell, ShoppingBag, X } from 'lucide-react';
 import { useClients } from '../../hooks/useClients';
 import { useClasses } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
 import { db } from '../../firebase/config';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
-import { format, formatDistanceToNow } from 'date-fns';
+import { collection, query, orderBy, where, limit, onSnapshot } from 'firebase/firestore';
+import { format, formatDistanceToNow, addDays, startOfWeek } from 'date-fns';
 
 function fmt12(t) {
   if (!t) return '';
@@ -26,7 +26,10 @@ const TYPE_ICONS = {
 export default function AdminNotifications() {
   const { clients }  = useClients();
   const { classes }  = useClasses();
-  const { bookings } = useBookings();
+  // Scope to this week's bookings using weekOf — the only date filter useBookings supports.
+  const today   = format(new Date(), 'yyyy-MM-dd');
+  const weekOf  = format(addDays(startOfWeek(new Date(), { weekStartsOn: 1 }), 0), 'yyyy-MM-dd');
+  const { bookings } = useBookings({ weekOf });
   const [readIds,    setReadIds]    = useState(() => {
     try { return new Set(JSON.parse(localStorage.getItem('pv_read_notifs') || '[]')); } catch { return new Set(); }
   });
@@ -39,22 +42,21 @@ export default function AdminNotifications() {
   });
 
   useEffect(() => {
-    // Listen for bookings created in the last 60 minutes so we don't flood on first load
-    const since = new Date(Date.now() - 60 * 60 * 1000);
+    // Listen for confirmed bookings created in the last 24 hours.
+    // Using a 24h window (instead of 60 min) means the admin sees alerts even
+    // if they navigate away and come back later in the day.
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const q = query(
       collection(db, 'bookings'),
+      where('status', '==', 'confirmed'),
       orderBy('createdAt', 'desc'),
-      limit(20)
+      limit(50)
     );
     const unsub = onSnapshot(q, snap => {
       const fresh = [];
       snap.forEach(d => {
         const data = d.data();
-        if (
-          data.status === 'confirmed' &&
-          data.createdAt?.toDate &&
-          data.createdAt.toDate() >= since
-        ) {
+        if (data.createdAt?.toDate && data.createdAt.toDate() >= since) {
           fresh.push({ id: d.id, ...data });
         }
       });
@@ -73,7 +75,6 @@ export default function AdminNotifications() {
 
   const visibleAlerts = newBookingAlerts.filter(b => !dismissedAlertIds.has(b.id));
 
-  const today    = format(new Date(), 'yyyy-MM-dd');
   const todayDay = (new Date().getDay() + 6) % 7;
 
   // ── Build notifications from live data ────────────────────
@@ -265,7 +266,7 @@ export default function AdminNotifications() {
                     🎉 New Booking — {client?.name || b.clientId}
                   </div>
                   <div style={{ fontSize:'0.82rem', color:'#4E6A2E', lineHeight:1.5 }}>
-                    {cls ? `${cls.name} with ${cls.trainer} · ${cls.date} at ${fmt12(cls.time)}` : `Class ID: ${b.classId}`}
+                    {cls ? `${cls.name} with ${cls.trainer} · ${cls.date || cls.startDate || ''} at ${fmt12(cls.time)}` : `Class ID: ${b.classId}`}
                     {bookedAt && <span style={{ color:'#7A9A50', marginLeft:8 }}>· {bookedAt}</span>}
                   </div>
                   {client?.phone && (

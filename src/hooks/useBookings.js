@@ -35,7 +35,9 @@ export function useBookings(filters = {}) {
     const batch      = writeBatch(db);
     const bookingRef = doc(collection(db, 'bookings'));
 
-    const hasPackage = clientData?.sessionsRemaining != null && clientData.sessionsRemaining > 0;
+    // null sessionsRemaining = unlimited package (has package, but never deduct sessions)
+    const isUnlimited = clientData?.sessionsTotal === null;
+    const hasPackage  = isUnlimited || (clientData?.sessionsRemaining != null && clientData.sessionsRemaining > 0);
 
     batch.set(bookingRef, {
       classId, clientId, weekOf,
@@ -45,7 +47,10 @@ export function useBookings(filters = {}) {
       createdAt:     serverTimestamp(),
     });
 
-    if (classData) {
+    // Only update booked/status on one-off classes. Recurring class docs are shared
+    // across all weeks — mutating booked/status on them causes cross-week counter
+    // corruption (shows full when empty, or available when full).
+    if (classData && !classData.isRecurring) {
       const newBooked = (classData.booked || 0) + 1;
       batch.update(doc(db, 'classes', classId), {
         booked:    newBooked,
@@ -54,8 +59,8 @@ export function useBookings(filters = {}) {
       });
     }
 
-    // Deduct a session from the client's package if they have one
-    if (hasPackage) {
+    // Deduct a session only for non-unlimited packages
+    if (hasPackage && !isUnlimited) {
       const newRemaining = clientData.sessionsRemaining - 1;
       const newUsed      = (clientData.sessionsUsed || 0) + 1;
       const newStatus    = newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active';
@@ -75,7 +80,8 @@ export function useBookings(filters = {}) {
   async function addClientBooking(classId, clientId, weekOf, classData, clientData, paymentMethod) {
     const batch      = writeBatch(db);
     const bookingRef = doc(collection(db, 'bookings'));
-    const hasPackage = clientData?.sessionsRemaining != null && clientData.sessionsRemaining > 0;
+    const isUnlimited = clientData?.sessionsTotal === null;
+    const hasPackage  = isUnlimited || (clientData?.sessionsRemaining != null && clientData.sessionsRemaining > 0);
 
     batch.set(bookingRef, {
       classId, clientId, weekOf,
@@ -85,7 +91,8 @@ export function useBookings(filters = {}) {
       createdAt:     serverTimestamp(),
     });
 
-    if (classData) {
+    // Only update booked/status on one-off classes (see addBooking comment above).
+    if (classData && !classData.isRecurring) {
       const newBooked = (classData.booked || 0) + 1;
       batch.update(doc(db, 'classes', classId), {
         booked:    newBooked,
@@ -94,8 +101,8 @@ export function useBookings(filters = {}) {
       });
     }
 
-    // Deduct session from client's package — same as admin booking
-    if (hasPackage) {
+    // Deduct session only for non-unlimited packages
+    if (hasPackage && !isUnlimited) {
       const newRemaining = clientData.sessionsRemaining - 1;
       const newUsed      = (clientData.sessionsUsed || 0) + 1;
       const newStatus    = newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active';
@@ -132,7 +139,7 @@ export function useBookings(filters = {}) {
       updatedAt: serverTimestamp(),
     });
 
-    if (classData) {
+    if (classData && !classData.isRecurring) {
       const newBooked = (classData.booked || 0) + 1;
       batch.update(doc(db, 'classes', classId), {
         booked:    newBooked,
@@ -160,7 +167,7 @@ export function useBookings(filters = {}) {
       status: 'cancelled', updatedAt: serverTimestamp(),
     });
 
-    if (classData) {
+    if (classData && !classData.isRecurring) {
       const newBooked = Math.max(0, (classData.booked || 1) - 1);
       batch.update(doc(db, 'classes', classId), {
         booked:    newBooked,
@@ -177,7 +184,8 @@ export function useBookings(filters = {}) {
       if (snap.exists()) client = { id: snap.id, ...snap.data() };
     }
 
-    if (client?.sessionsRemaining != null) {
+    // Only restore session for non-unlimited packages (sessionsRemaining null = unlimited)
+    if (client?.sessionsRemaining != null && client.sessionsTotal !== null) {
       const newRemaining = (client.sessionsRemaining || 0) + 1;
       const newUsed      = Math.max(0, (client.sessionsUsed || 1) - 1);
       const newStatus    = newRemaining <= 2 ? 'low' : 'active';
@@ -212,7 +220,7 @@ export function useBookings(filters = {}) {
       updatedAt:    serverTimestamp(),
     });
 
-    if (classData) {
+    if (classData && !classData.isRecurring) {
       const newBooked = Math.max(0, (classData.booked || 1) - 1);
       batch.update(doc(db, 'classes', classId), {
         booked:    newBooked,
@@ -221,8 +229,8 @@ export function useBookings(filters = {}) {
       });
     }
 
-    // Restore the session since cancellation is within the allowed window
-    if (clientData?.sessionsRemaining != null) {
+    // Restore the session only for non-unlimited packages (null = unlimited, don't touch)
+    if (clientData?.sessionsRemaining != null && clientData?.sessionsTotal !== null) {
       const newRemaining = (clientData.sessionsRemaining || 0) + 1;
       const newUsed      = Math.max(0, (clientData.sessionsUsed || 1) - 1);
       const newStatus    = newRemaining <= 2 ? 'low' : 'active';

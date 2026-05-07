@@ -127,8 +127,7 @@ export function useClients() {
     const newRemaining = Math.max(0, currentRemaining - 1);
     await updateDoc(doc(db, 'clients', id), {
       sessionsRemaining: newRemaining,
-      sessionsUsed:      (client?.sessionsUsed      || 0) + 1,
-      cancelledSessions: (client?.cancelledSessions || 0) + 1,
+      sessionsUsed:      (client?.sessionsUsed || 0) + 1,
       status: newRemaining === 0 ? 'expired' : newRemaining <= 2 ? 'low' : 'active',
       updatedAt: serverTimestamp(),
     });
