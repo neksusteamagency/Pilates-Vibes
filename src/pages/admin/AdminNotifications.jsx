@@ -5,7 +5,7 @@ import { useClasses } from '../../hooks/useClasses';
 import { useBookings } from '../../hooks/useBookings';
 import { db } from '../../firebase/config';
 import { collection, query, orderBy, where, limit, onSnapshot } from 'firebase/firestore';
-import { format, formatDistanceToNow, addDays, startOfWeek } from 'date-fns';
+import { format, formatDistanceToNow, addDays, startOfWeek, parseISO } from 'date-fns';
 
 function fmt12(t) {
   if (!t) return '';
@@ -266,7 +266,12 @@ export default function AdminNotifications() {
                     🎉 New Booking — {client?.name || b.clientId}
                   </div>
                   <div style={{ fontSize:'0.82rem', color:'#4E6A2E', lineHeight:1.5 }}>
-                    {cls ? `${cls.name} with ${cls.trainer} · ${cls.date || cls.startDate || ''} at ${fmt12(cls.time)}` : `Class ID: ${b.classId}`}
+                    {cls ? (() => {
+                      const occurrenceDate = b.weekOf && cls.day != null
+                        ? format(addDays(parseISO(b.weekOf), cls.day), 'MMM d')
+                        : cls.date || cls.startDate || '';
+                      return `${cls.name} with ${cls.trainer} · ${occurrenceDate} at ${fmt12(cls.time)}`;
+                    })() : `Class ID: ${b.classId}`}
                     {bookedAt && <span style={{ color:'#7A9A50', marginLeft:8 }}>· {bookedAt}</span>}
                   </div>
                   {client?.phone && (

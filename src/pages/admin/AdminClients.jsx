@@ -39,7 +39,7 @@ function historyStatusStyle(s) {
 function calcExpiry(purchaseDate, pkgName) {
   if (!purchaseDate) return '';
   const d = new Date(purchaseDate);
-  d.setMonth(d.getMonth() + (pkgName === 'Monthly Unlimited' ? 1 : 2));
+  d.setMonth(d.getMonth() + 1);
   return d.toISOString().split('T')[0];
 }
 
@@ -308,13 +308,25 @@ function ClientModal({ client, onClose, updateClient, removeClient, freezeClient
       // ── 6. Resolve class names for all records ──
       const records = await Promise.all(merged.map(async data => {
         let className = data.className || '—';
-        if (data.classId && className === '—') {
+        let classDay  = data.classDay ?? null;
+        if (data.classId && (className === '—' || classDay === null)) {
           try {
             const clsSnap = await getDoc(firestoreDoc(db, 'classes', data.classId));
-            if (clsSnap.exists()) className = clsSnap.data().name || data.classId;
-          } catch { /* class doc not found, keep '—' */ }
+            if (clsSnap.exists()) {
+              const clsData = clsSnap.data();
+              if (className === '—') className = clsData.name || data.classId;
+              if (classDay === null) classDay  = clsData.day ?? null;
+            }
+          } catch { /* class doc not found, keep defaults */ }
         }
-        return { ...data, className };
+        // For booking records (source=booking), derive actual date from weekOf + classDay
+        let displayDate = data.date;
+        if (data._source === 'booking' && data.weekOf && classDay != null) {
+          const monday = new Date(data.weekOf + 'T12:00:00');
+          monday.setDate(monday.getDate() + classDay);
+          displayDate = monday.toISOString().split('T')[0];
+        }
+        return { ...data, className, classDay, date: displayDate };
       }));
 
       setHistory(records);

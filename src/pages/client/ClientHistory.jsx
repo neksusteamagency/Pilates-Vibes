@@ -4,7 +4,7 @@ import { useBookings } from '../../hooks/useBookings';
 import { useClasses } from '../../hooks/useClasses';
 import { useClients } from '../../hooks/useClients';
 import { Search } from 'lucide-react';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, addDays } from 'date-fns';
 import toast from 'react-hot-toast';
 
 const FILTERS = ['All', 'Attended', 'Cancelled', 'No-show'];
@@ -16,12 +16,13 @@ function statusStyle(s) {
   return { bg:'#F0EAE3', color:'#3D2314' };
 }
 
-// Format Firestore weekOf string (yyyy-MM-dd) for display
-function formatDate(weekOf) {
+// Compute actual class date from weekOf (Monday) + cls.day offset
+function formatDate(weekOf, clsDay) {
   if (!weekOf) return { month: '—', day: '—' };
   try {
-    const d = parseISO(weekOf);
-    return { month: format(d, 'MMM'), day: format(d, 'd') };
+    const monday = parseISO(weekOf);
+    const actual = clsDay != null ? addDays(monday, clsDay) : monday;
+    return { month: format(actual, 'MMM'), day: format(actual, 'd') };
   } catch {
     return { month: '—', day: '—' };
   }
@@ -42,10 +43,10 @@ export default function ClientHistory() {
 
   // Resolve the real client doc first (merged clients have a different doc ID than their uid)
   const { clients } = useClients();
-  const clientDoc = clients.find(c => c.id === user?.uid || c.uid === user?.uid);
+  const resolvedClientId = user?.clientDocId || user?.uid;
+  const clientDoc = clients.find(c => c.id === resolvedClientId);
 
-  // Fetch all bookings using the real doc ID, not just the auth uid
-  const { bookings, loading, clientCancelBooking } = useBookings({ clientId: clientDoc?.id ?? user?.uid });
+  const { bookings, loading, clientCancelBooking } = useBookings({ clientId: resolvedClientId });
   const { classes } = useClasses();
 
   // FIXED: Show past/completed bookings INCLUDING 'confirmed'
@@ -156,7 +157,7 @@ export default function ClientHistory() {
         ) : filtered.map((b, i) => {
           const cls  = getClass(b.classId);
           const st   = statusStyle(b.status);
-          const { month, day } = formatDate(b.weekOf);
+          const { month, day } = formatDate(b.weekOf, cls?.day);
           return (
             <div key={b.id} style={{ display:'flex', alignItems:'center', gap:14, padding:'14px 20px', borderBottom: i < filtered.length - 1 ? '1px solid #E0D5C1':'none', transition:'background 0.15s' }}
               onMouseEnter={e => e.currentTarget.style.background = '#F5F0E8'}
