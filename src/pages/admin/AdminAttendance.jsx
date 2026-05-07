@@ -195,7 +195,7 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
           {noShows > 0 && (
             <div style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 12px', borderRadius:8, background:'#F7EDED', border:'1px solid #DDB0B0', color:'#8C3A3A', fontSize:'0.8rem', marginTop:8, marginBottom:14 }}>
               <MinusCircle size={13} style={{ flexShrink:0 }}/>
-              {noShows} session{noShows > 1 ? 's' : ''} will be deducted for no-shows.
+              {noShows} client{noShows > 1 ? 's' : ''} marked as no-show. Sessions are deducted at booking time, not here.
             </div>
           )}
 
@@ -214,7 +214,7 @@ function AttendanceModal({ cls, weekStart, weekOf, clients, allAttendance, onSav
 
             {walkInMode === 'search' ? (
               <div>
-                <div style={{ fontSize:'0.78rem', color:'#6B5744', marginBottom:6 }}>Search an existing client — their session will be deducted.</div>
+                <div style={{ fontSize:'0.78rem', color:'#6B5744', marginBottom:6 }}>Search an existing client to add as a walk-in.</div>
                 <div style={{ position:'relative', marginBottom:8 }}>
                   <Search size={13} style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'#9C8470' }}/>
                   <input placeholder="Search by name…" value={walkInSearch} onChange={e => setWalkInSearch(e.target.value)}
@@ -372,7 +372,7 @@ export default function AdminAttendance() {
           { label:"Today's Classes", value: todayClasses.length, sub:'scheduled today',    color:'#A0673A' },
           { label:'Total Booked',    value: totalToday,          sub:'across all classes', color:'#3D2314' },
           { label:'Attended',        value: attendedToday,       sub:'logged so far',      color:'#7C8C5E' },
-          { label:'No-shows',        value: noShowToday,         sub:'sessions deducted',  color:'#C4AE8F' },
+          { label:'No-shows',        value: noShowToday,         sub:'logged this week',   color:'#C4AE8F' },
         ].map(s => (
           <div key={s.label} style={{ background:'#FAF7F2', borderRadius:14, padding:20, border:'1px solid #E0D5C1', boxShadow:'0 2px 16px rgba(61,35,20,0.10)' }}>
             <div style={{ fontSize:'0.72rem', textTransform:'uppercase', letterSpacing:'0.1em', color:'#9C8470', marginBottom:12 }}>{s.label}</div>
@@ -529,7 +529,7 @@ export default function AdminAttendance() {
                   <div style={{ fontSize:'0.85rem', fontWeight:500, color:'#2A1A0E' }}>{client.name}</div>
                   <div style={{ fontSize:'0.72rem', color:'#9C8470', marginTop:1 }}>{cls.name} · {fmt12(cls.time)}</div>
                 </div>
-                <span style={{ fontSize:'0.68rem', color:'#8C3A3A', background:'#F7EDED', padding:'2px 8px', borderRadius:20, fontWeight:500 }}>–1 session</span>
+                <span style={{ fontSize:'0.68rem', color:'#8C3A3A', background:'#F7EDED', padding:'2px 8px', borderRadius:20, fontWeight:500 }}>No-show</span>
               </div>
             ))}
           </Card>
